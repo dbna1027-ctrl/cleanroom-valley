@@ -1,0 +1,1793 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>Cleanroom Valley — FAB-4</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    background: #14101a;
+    min-height: 100%;
+    font-family: 'Press Start 2P', monospace;
+    color: #f6e9c8;
+    overflow: hidden;
+  }
+  body {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    min-height: 100vh; gap: 12px;
+  }
+  .stage {
+    width: min(96vw, calc(86vh * 1.7778));
+    aspect-ratio: 16/9;
+    background: #0a0810;
+    box-shadow:
+      0 0 0 4px #2a2236,
+      0 0 0 8px #1a1422,
+      0 20px 60px rgba(0,0,0,.6);
+    position: relative;
+    image-rendering: pixelated;
+  }
+  canvas {
+    display: block;
+    width: 100%; height: 100%;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+  .hint {
+    font-size: 9px;
+    color: #c8a878;
+    text-align: center;
+    line-height: 1.6;
+    max-width: min(96vw, 880px);
+    padding: 0 8px;
+  }
+  .hint b { color: #f4d04c; }
+  .toast {
+    position: absolute;
+    inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  .toast.show .panel {
+    transform: scale(1);
+    opacity: 1;
+  }
+  .panel {
+    background: #3a2818;
+    border: 3px solid #f4d04c;
+    box-shadow: 0 0 0 3px #1a1208, 0 8px 0 0 rgba(0,0,0,.4);
+    padding: 16px 24px;
+    color: #fff2c8;
+    font-size: 14px;
+    text-align: center;
+    transform: scale(0.9);
+    opacity: 0;
+    transition: all 0.3s;
+    image-rendering: pixelated;
+  }
+  .panel small {
+    display: block;
+    margin-top: 10px;
+    font-size: 8px;
+    color: #c8a878;
+  }
+</style>
+</head>
+<body>
+
+<div class="stage" id="stage">
+  <canvas id="game" width="960" height="540"></canvas>
+  <div class="toast" id="toast"><div class="panel" id="toast-panel"></div></div>
+</div>
+<div class="hint">
+  <b>이동</b> 방향키 / WASD &nbsp; · &nbsp; <b>상호작용</b> Space / E &nbsp; · &nbsp; <b>휴식 (Power 회복)</b> R &nbsp; · &nbsp; <b>목표</b> Si 100개 출하
+</div>
+
+<script>
+// ============================================================
+//  CLEANROOM VALLEY — Stardew-style semiconductor fab
+//  Built on the FAB-4 design pack (warm pastel pixel palette)
+// ============================================================
+
+const cvs = document.getElementById('game');
+const ctx = cvs.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+// Internal canvas is 960x540 but we draw in 480x270 logical coords.
+// The 2x scale keeps pixel art crisp while giving text 2x more pixels per glyph.
+ctx.scale(2, 2);
+
+const W = 480, H = 270;
+
+// --- Palette (from FAB-4 shared/lib.js) -----------------------
+const C = {
+  outline:'#2a1a2e', black:'#1a1208',
+  // suit
+  suit:'#f4ecd4', suitHi:'#fffbed', suitSh:'#c8bea0',
+  // visor
+  visor:'#1a2c48', visorMid:'#3a6088', visorHi:'#6a9cc0',
+  // gloves
+  glove:'#3878b0', gloveSh:'#1c4878', gloveHi:'#78a8d8',
+  // boots
+  boot:'#2a2436', bootHi:'#4a4458',
+  // badge yellow
+  badge:'#f4d04c',
+  // floor
+  fl0:'#dcdee6', fl1:'#c8cad4', fl2:'#bec0cc', fl3:'#a8aab6', fl4:'#8a8c9a', flGrid:'#9da0ac',
+  // wall
+  wall:'#efe9d6', wallSh:'#bdb39a', wallHi:'#d8d0b8', wallDk:'#a89980', wallDk2:'#8a7858',
+  // litho yellow
+  yel:'#f0c440', yelHi:'#fce078', yelSh:'#a87810', yelDk:'#b88828',
+  // etch purple
+  pur:'#6a5878', purHi:'#8a78a0', purSh:'#4c3c5c',
+  plasma:'#d870b0', plasmaHi:'#f4a8d8', plasmaCore:'#fff2c8',
+  // FOUP orange
+  org:'#e8961c', orgHi:'#f4b048', orgSh:'#a86010',
+  // panel cool
+  panelDk:'#3a4860', panelMid:'#5a708c', screen:'#2a4860',
+  laser:'#a8e8ff', laserHi:'#dcf6ff', laserCore:'#ffffff',
+  // wood UI
+  wood:'#3a2818', woodHi:'#6c4828', woodDk:'#1a1208',
+  woodMid:'#5a3c20', woodMidHi:'#8a5c30', woodLite:'#a87838',
+  parchment:'#fff2c8', parchHi:'#fff8d8', parchMid:'#c8a878',
+  // green
+  grn:'#3a8c5c', grnHi:'#74c490', grnXHi:'#a8f0c0',
+  // red
+  red:'#c44830', redHi:'#ff8868',
+  // silicon
+  si:'#787890', siMid:'#a8a8c0', siHi:'#c8c8e0', siXHi:'#dcdcf8',
+  // crate brown
+  crate:'#a87838', crateHi:'#c49858', crateSh:'#7a5828',
+  // bg
+  void:'#14101a', voidLite:'#2a2236',
+};
+
+// pixel rect helper
+function R(x,y,w,h,col){ ctx.fillStyle = col; ctx.fillRect(x|0,y|0,w|0,h|0); }
+function P(x,y,col){ ctx.fillStyle = col; ctx.fillRect(x|0,y|0,1,1); }
+function txt(s, x, y, size, col, anchor){
+  ctx.fillStyle = col;
+  ctx.font = size + "px 'Press Start 2P', monospace";
+  ctx.textAlign = anchor || 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(s, x, y);
+}
+
+// ============================================================
+//  WORLD GEOMETRY  (pixel coords, 480x270 canvas)
+// ============================================================
+//
+//   Top bar (HUD)         y =   0 .. 22
+//   Back wall band        y =  22 .. 78
+//   Floor (play area)     y =  78 .. 238
+//   Inventory bar         y = 238 .. 270
+//
+// Play bounds for player FEET:
+const FLOOR_TOP = 200;   // can't walk into back wall area higher than this
+const FLOOR_BOT = 232;
+const FLOOR_LEFT = 8;
+const FLOOR_RIGHT = 472;
+
+// Stations (interaction triggers). Player can interact when within range.
+const STATIONS = [
+  { id:'foup',   x:32,  y:96,  w:78, h:114, prompt:'웨이퍼 꺼내기',  doorX:71,  doorY:218 },
+  { id:'litho',  x:174, y:104, w:116,h:98,  prompt:'노광 시작',     doorX:232, doorY:212 },
+  { id:'etcher', x:352, y:116, w:92, h:78,  prompt:'식각 시작',     doorX:398, doorY:202 },
+  { id:'crate',  x:432, y:200, w:32, h:24,  prompt:'출하',         doorX:448, doorY:228 },
+  { id:'npc',    x:312, y:188, w:14, h:26,  prompt:'대화',          doorX:319, doorY:222 },
+];
+
+// ============================================================
+//  GAME STATE
+// ============================================================
+
+const state = {
+  // player
+  px: 232, py: 222,       // foot position
+  pdir: 'down',           // 'down' | 'up' | 'left' | 'right'
+  pmove: false,
+  pwalk: 0,               // 0..3 walk cycle frame
+  pwalkAcc: 0,
+  // carrying
+  carry: null,            // null | 'raw' | 'exposed' | 'etched'
+  carryQ: 0,              // 0=normal, 1=good, 2=perfect
+  // resources
+  silicon: 0,
+  power: 100,
+  temp: 22.1,
+  day: 1,
+  // machines
+  lithoBusy: 0,    // remaining frames
+  etchBusy: 0,
+  lithoOut: false, // true means a wafer is sitting in the litho ready
+  lithoOutQ: 0,    // quality of that ready wafer
+  etchOut: false,
+  etchOutQ: 0,
+  // minigame
+  miniGame: null,         // { type, pos:0..1, dir:±1, speed, result, lockedAt }
+  // combo & stats
+  combo: 0,
+  comboTimer: 0,          // frames left in combo window
+  maxCombo: 0,
+  shipTotal: 0,
+  perfectTotal: 0,
+  scrapTotal: 0,
+  // quest
+  quest: null,            // { type, target, progress, reward, label }
+  questDone: 0,
+  perfectQuestCount: 0,   // counter for active perfect quest
+  // achievements
+  achv: {},               // id -> true
+  achvQ: [],              // queue of { text, until, sub }
+  // rush order
+  rush: null,             // { remaining, shipped, target, mult }
+  nextRushAt: 60 * 35,    // first rush ~35s in
+  // ui
+  msg: null,            // { text, until }
+  speech: null,         // { who:'npc'|'self', text, until }
+  prompt: null,         // station id you can interact with now
+  // global tick
+  t: 0,
+  won: false,
+};
+
+// ============================================================
+//  INPUT
+// ============================================================
+
+const keys = {};
+window.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+  if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+  if (k === ' ' || k === 'e') {
+    if (state.miniGame && !state.miniGame.result) resolveMiniGame();
+    else tryInteract();
+  }
+  if (k === 'r') rest();
+});
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+function isDown(...names){ return names.some(n => keys[n]); }
+
+// ============================================================
+//  GAME LOGIC
+// ============================================================
+
+function toast(text, ms){
+  const t = document.getElementById('toast');
+  const p = document.getElementById('toast-panel');
+  p.innerHTML = text;
+  t.classList.add('show');
+  clearTimeout(toast._h);
+  toast._h = setTimeout(() => t.classList.remove('show'), ms || 1800);
+}
+
+function showMsg(text, frames){
+  state.msg = { text, until: state.t + (frames||120) };
+}
+
+function speak(who, text, frames){
+  state.speech = { who, text, until: state.t + (frames||140) };
+}
+
+// pick nearest station within range of player feet
+function nearestStation(){
+  let best = null, bd = 999;
+  for (const s of STATIONS){
+    const dx = state.px - s.doorX, dy = state.py - s.doorY;
+    const d = Math.hypot(dx, dy);
+    if (d < 20 && d < bd){ bd = d; best = s; }
+  }
+  return best;
+}
+
+function tryInteract(){
+  if (state.won) return;
+  if (state.miniGame) return;
+  const s = nearestStation();
+  if (!s) return;
+
+  if (s.id === 'foup'){
+    if (state.carry){ showMsg('이미 들고 있음'); return; }
+    state.carry = 'raw';
+    state.carryQ = 0;
+    speak('self', 'Raw wafer 획득!', 90);
+  }
+  else if (s.id === 'litho'){
+    if (state.lithoBusy > 0){ showMsg('가동 중...'); return; }
+    if (state.lithoOut){
+      if (state.carry){ showMsg('손 비워야 함'); return; }
+      state.carry = 'exposed';
+      state.carryQ = state.lithoOutQ;
+      state.lithoOut = false;
+      const tag = state.carryQ === 2 ? 'PERFECT exposed!' : state.carryQ === 1 ? 'Good exposed!' : 'Exposed';
+      speak('self', tag, 90);
+      return;
+    }
+    if (state.carry !== 'raw'){ showMsg('Raw wafer 필요'); return; }
+    if (state.power < 8){ showMsg('Power 부족! R로 휴식'); return; }
+    startMiniGame('litho');
+  }
+  else if (s.id === 'etcher'){
+    if (state.etchBusy > 0){ showMsg('가동 중...'); return; }
+    if (state.etchOut){
+      if (state.carry){ showMsg('손 비워야 함'); return; }
+      state.carry = 'etched';
+      state.carryQ = state.etchOutQ;
+      state.etchOut = false;
+      const tag = state.carryQ === 2 ? 'PERFECT etched!' : state.carryQ === 1 ? 'Good etched!' : 'Etched';
+      speak('self', tag, 90);
+      return;
+    }
+    if (state.carry !== 'exposed'){ showMsg('Exposed wafer 필요'); return; }
+    if (state.power < 10){ showMsg('Power 부족! R로 휴식'); return; }
+    startMiniGame('etcher');
+  }
+  else if (s.id === 'crate'){
+    if (state.carry !== 'etched'){ showMsg('완성품(etched) 필요'); return; }
+    const reward = computeShipReward(state.carryQ);
+    state.silicon += reward;
+    onShipped(state.carryQ);
+    state.carry = null;
+    state.carryQ = 0;
+    speak('self', '+' + reward + ' Si !!', 110);
+    // small temp drift each ship
+    state.temp += (Math.random()-0.5) * 0.6;
+    state.temp = Math.max(20, Math.min(25, state.temp));
+    if (state.silicon >= 100 && !state.won){
+      state.won = true;
+      setTimeout(() => {
+        const stats = '<small>Day ' + state.day + ' / Max combo x' + state.maxCombo +
+                      '<br>Perfect ' + state.perfectTotal + ' / Scrap ' + state.scrapTotal +
+                      '<br>Quest 완료 ' + state.questDone + '회' +
+                      '<br>R 키로 새 일 시작</small>';
+        toast('🎉 FAB COMPLETE! 🎉<br>Yield: 98%<br>' + stats, 99999);
+      }, 400);
+    }
+  }
+  else if (s.id === 'npc'){
+    if (state.quest){
+      const q = state.quest;
+      speak('npc', q.label + ' ' + q.progress + '/' + q.target, 160);
+    } else {
+      const tips = [
+        '오늘 수율 좋네요!',
+        '캘리브레이션은 정중앙!',
+        '콤보 끊기지 않게!',
+      ];
+      speak('npc', tips[Math.floor(state.t/120)%tips.length], 140);
+    }
+  }
+}
+
+function rest(){
+  if (state.power >= 100 && !state.won){
+    showMsg('이미 100% Power');
+    return;
+  }
+  state.power = 100;
+  state.day += 1;
+  state.temp = 22.0 + Math.random() * 0.4;
+  if (state.won){
+    // reset for fun if won
+    state.won = false;
+    state.silicon = 0;
+    state.shipTotal = 0;
+    state.perfectTotal = 0;
+    state.maxCombo = 0;
+    state.questDone = 0;
+    state.achv = {};
+    document.getElementById('toast').classList.remove('show');
+  }
+  if (state.day === 3) unlock('DAY_3', '☀️ Day 3 도달!', 15);
+  if (state.day === 7) unlock('DAY_7', '☀️ Day 7 도달!', 30);
+  speak('self', 'Day ' + state.day + ' 시작!', 100);
+}
+
+// ============================================================
+//  MINIGAME — timing calibration
+// ============================================================
+
+function startMiniGame(type){
+  state.miniGame = { type, pos: 0, dir: 1, speed: 0.016, result: null, lockedAt: 0 };
+}
+
+function resolveMiniGame(){
+  const m = state.miniGame;
+  if (!m || m.result) return;
+  const p = m.pos;
+  let result;
+  if (p > 0.45 && p < 0.55) result = 'perfect';
+  else if (p > 0.28 && p < 0.72) result = 'good';
+  else result = 'bad';
+  m.result = result;
+  m.lockedAt = state.t;
+
+  const isLitho = m.type === 'litho';
+  if (result === 'bad'){
+    // scrap the wafer
+    state.carry = null;
+    state.carryQ = 0;
+    state.scrapTotal++;
+    state.power = Math.max(0, state.power - 4);
+    speak('self', 'SCRAP! 캘리브레이션 실패', 110);
+    // break combo on scrap
+    state.combo = 0;
+    state.comboTimer = 0;
+  } else {
+    // perfect → +1 quality, good → keep current
+    const inQ = state.carryQ;
+    const outQ = result === 'perfect' ? Math.min(2, inQ + 1) : inQ;
+    state.carry = null;
+    if (isLitho){
+      state.lithoBusy = 180;
+      state.lithoOutQ = outQ;
+      state.power = Math.max(0, state.power - 8);
+    } else {
+      state.etchBusy = 180;
+      state.etchOutQ = outQ;
+      state.power = Math.max(0, state.power - 10);
+    }
+  }
+}
+
+function tickMiniGame(){
+  const m = state.miniGame;
+  if (!m) return;
+  if (m.result){
+    if (state.t - m.lockedAt > 40) state.miniGame = null;
+    return;
+  }
+  // ramp up speed slowly for skill
+  m.pos += m.dir * m.speed;
+  if (m.pos >= 1){ m.pos = 1; m.dir = -1; }
+  if (m.pos <= 0){ m.pos = 0; m.dir = 1; }
+}
+
+// ============================================================
+//  QUEST  — NPC issues rotating goals
+// ============================================================
+
+const QUESTS = [
+  { type:'ship',    target:3,  reward:25, label:'웨이퍼 3개 출하' },
+  { type:'perfect', target:1,  reward:30, label:'Perfect 1개' },
+  { type:'combo',   target:3,  reward:35, label:'콤보 x3 도달' },
+  { type:'ship',    target:5,  reward:50, label:'웨이퍼 5개 출하' },
+  { type:'perfect', target:2,  reward:60, label:'Perfect 2개' },
+  { type:'combo',   target:5,  reward:80, label:'콤보 x5 도달' },
+];
+
+function newQuest(){
+  const q = QUESTS[state.questDone % QUESTS.length];
+  state.quest = { ...q, progress: 0 };
+  state.perfectQuestCount = 0;
+}
+
+// ============================================================
+//  COMBO & SHIP REWARDS
+// ============================================================
+
+function comboMult(){
+  if (state.combo >= 5) return 3;
+  if (state.combo >= 3) return 2;
+  if (state.combo >= 2) return 1.5;
+  return 1;
+}
+
+function qualityMult(q){
+  return [1, 2, 4][q];
+}
+
+function computeShipReward(q){
+  const base = 10;
+  const rushMult = state.rush ? 2 : 1;
+  return Math.round(base * qualityMult(q) * comboMult() * rushMult);
+}
+
+function addCombo(){
+  if (state.comboTimer > 0) state.combo++;
+  else state.combo = 1;
+  if (state.combo > state.maxCombo) state.maxCombo = state.combo;
+  state.comboTimer = 60 * 15; // 15s window
+}
+
+function tickCombo(){
+  if (state.comboTimer > 0){
+    state.comboTimer--;
+    if (state.comboTimer === 0){
+      if (state.combo > 1) speak('self', 'Combo 끊김!', 70);
+      state.combo = 0;
+    }
+  }
+}
+
+function onShipped(q){
+  state.shipTotal++;
+  if (q === 2) state.perfectTotal++;
+  addCombo();
+
+  // rush order tracking
+  if (state.rush){
+    state.rush.shipped++;
+    if (state.rush.shipped >= state.rush.target){
+      state.silicon += 30;
+      unlock('RUSH_HERO', '🚨 Rush 성공! +30 보너스', 0);
+      state.rush = null;
+    }
+  }
+
+  // quest progress
+  if (state.quest){
+    const qst = state.quest;
+    let advanced = false;
+    if (qst.type === 'ship'){
+      qst.progress++;
+      advanced = true;
+    } else if (qst.type === 'perfect' && q === 2){
+      qst.progress++;
+      advanced = true;
+    } else if (qst.type === 'combo'){
+      qst.progress = state.maxCombo;
+      advanced = true;
+    }
+    if (advanced && qst.progress >= qst.target){
+      state.silicon += qst.reward;
+      state.questDone++;
+      speak('npc', '퀘스트 완료! +' + qst.reward + ' Si', 180);
+      newQuest();
+    }
+  }
+
+  // achievements
+  if (state.shipTotal === 1) unlock('FIRST', '🎯 First Ship! +5', 5);
+  if (state.shipTotal === 10) unlock('TEN', '📦 10 Ships! +20', 20);
+  if (state.shipTotal === 25) unlock('TWENTY_FIVE', '📦 25 Ships! +50', 50);
+  if (state.perfectTotal === 1) unlock('PERFECT_1', '✨ First Perfect! +15', 15);
+  if (state.perfectTotal === 5) unlock('PERFECT_5', '✨✨ 5 Perfects! +40', 40);
+  if (state.maxCombo === 3 && !state.achv.COMBO_3) unlock('COMBO_3', '🔥 Combo x3! +10', 10);
+  if (state.maxCombo === 5 && !state.achv.COMBO_5) unlock('COMBO_5', '🔥🔥 Combo x5! +30', 30);
+  if (state.maxCombo === 10 && !state.achv.COMBO_10) unlock('COMBO_10', '🔥🔥🔥 Combo x10! +80', 80);
+}
+
+// ============================================================
+//  ACHIEVEMENTS
+// ============================================================
+
+function unlock(id, text, bonus){
+  if (state.achv[id]) return;
+  state.achv[id] = true;
+  state.achvQ.push({ text, until: state.t + 200, born: state.t });
+  if (bonus) state.silicon += bonus;
+}
+
+function tickAchv(){
+  if (state.achvQ.length === 0) return;
+  if (state.t > state.achvQ[0].until) state.achvQ.shift();
+}
+
+// ============================================================
+//  RUSH ORDERS
+// ============================================================
+
+function spawnRush(){
+  state.rush = { target: 2, shipped: 0, remaining: 60 * 30, mult: 2 };
+  speak('npc', '🚨 RUSH ORDER!', 200);
+}
+
+function tickRush(){
+  if (state.rush){
+    state.rush.remaining--;
+    if (state.rush.remaining <= 0){
+      speak('self', 'Rush 시간 초과', 100);
+      state.rush = null;
+    }
+  } else {
+    state.nextRushAt--;
+    if (state.nextRushAt <= 0){
+      if (state.shipTotal >= 2 && !state.won){
+        spawnRush();
+      }
+      state.nextRushAt = 60 * (50 + Math.random()*40 | 0);
+    }
+  }
+}
+
+// ============================================================
+//  UPDATE  (per frame)
+// ============================================================
+
+function update(){
+  state.t++;
+
+  // tick auxiliary systems
+  tickMiniGame();
+  tickCombo();
+  tickRush();
+  tickAchv();
+
+  // player movement (locked during minigame)
+  let vx=0, vy=0;
+  if (!state.miniGame){
+    if (isDown('arrowup','w'))    { vy = -1; state.pdir='up'; }
+    if (isDown('arrowdown','s'))  { vy =  1; state.pdir='down'; }
+    if (isDown('arrowleft','a'))  { vx = -1; state.pdir='left'; }
+    if (isDown('arrowright','d')) { vx =  1; state.pdir='right'; }
+  }
+  state.pmove = !!(vx || vy);
+
+  if (state.pmove){
+    // diagonal normalize
+    if (vx && vy){ vx *= 0.707; vy *= 0.707; }
+    const speed = 1.3;
+    let nx = state.px + vx * speed;
+    let ny = state.py + vy * speed;
+    // bounds
+    nx = Math.max(FLOOR_LEFT, Math.min(FLOOR_RIGHT, nx));
+    ny = Math.max(FLOOR_TOP, Math.min(FLOOR_BOT, ny));
+    // collision with stations (feet must stay below their bottoms or to side)
+    for (const s of STATIONS){
+      if (s.id === 'npc' || s.id === 'crate') continue;
+      const sx0=s.x, sx1=s.x+s.w, sy0=s.y, sy1=s.y+s.h;
+      // expand a bit for visual collision (player width ~ 8)
+      if (nx > sx0 - 4 && nx < sx1 + 4 && ny > sy0 - 2 && ny < sy1 + 2){
+        // try axis-separated
+        const tryX = state.px + vx*speed;
+        if (!(tryX > sx0 - 4 && tryX < sx1 + 4 && state.py > sy0 - 2 && state.py < sy1 + 2)){
+          nx = tryX; ny = state.py;
+        } else {
+          const tryY = state.py + vy*speed;
+          if (!(state.px > sx0 - 4 && state.px < sx1 + 4 && tryY > sy0 - 2 && tryY < sy1 + 2)){
+            nx = state.px; ny = tryY;
+          } else {
+            nx = state.px; ny = state.py;
+          }
+        }
+      }
+    }
+    state.px = nx; state.py = ny;
+
+    // walk anim
+    state.pwalkAcc += speed;
+    if (state.pwalkAcc > 5){
+      state.pwalkAcc = 0;
+      state.pwalk = (state.pwalk + 1) % 4;
+    }
+  } else {
+    state.pwalk = 0;
+  }
+
+  // machine timers
+  if (state.lithoBusy > 0){
+    state.lithoBusy--;
+    if (state.lithoBusy === 0){
+      state.lithoOut = true;
+      const tag = state.lithoOutQ === 2 ? 'Litho 완료 (PERFECT!)' : 'Litho 완료';
+      speak('self', tag, 80);
+    }
+  }
+  if (state.etchBusy > 0){
+    state.etchBusy--;
+    if (state.etchBusy === 0){
+      state.etchOut = true;
+      const tag = state.etchOutQ === 2 ? 'Etch 완료 (PERFECT!)' : 'Etch 완료';
+      speak('self', tag, 80);
+    }
+  }
+
+  // resource drift
+  if (state.t % 90 === 0){
+    state.temp += (Math.random()-0.5) * 0.2;
+    state.temp = Math.max(20.5, Math.min(24.5, state.temp));
+  }
+  if ((state.lithoBusy > 0 || state.etchBusy > 0) && state.t % 30 === 0){
+    state.temp = Math.min(24.5, state.temp + 0.05);
+  }
+
+  // expire messages
+  if (state.msg && state.t > state.msg.until) state.msg = null;
+  if (state.speech && state.t > state.speech.until) state.speech = null;
+
+  // interaction prompt
+  const ns = nearestStation();
+  state.prompt = ns;
+}
+
+// ============================================================
+//  RENDER
+// ============================================================
+
+function clear(){
+  R(0,0,W,H,C.voidLite);
+}
+
+// floor: tiled checker with grid lines (matches design pattern)
+function drawFloor(){
+  for (let y=78; y<238; y+=16){
+    for (let x=0; x<W; x+=16){
+      const c = ((x>>4)+(y>>4))&1 ? C.fl1 : C.fl2;
+      R(x,y,16,16,c);
+      // grid
+      R(x,y,16,1,C.flGrid);
+      R(x,y,1,16,C.fl3);
+    }
+  }
+  // tiny dirt flecks
+  for (let y=78; y<238; y+=32){
+    for (let x=0; x<W; x+=32){
+      P(x+6, y+22, C.fl3);
+      P(x+22, y+6, C.fl3);
+    }
+  }
+  // floor caution stripes (yellow at FOUP zone, red at litho zone, magenta at etch zone)
+  R(28,200,84,3,C.black); R(28,201,84,1,C.badge);
+  R(160,210,148,3,C.black); R(160,211,148,1,C.red);
+  R(334,200,100,3,C.black); R(334,201,100,1,C.plasma);
+}
+
+// back wall
+function drawWall(){
+  for (let x=0; x<W; x+=48){
+    R(x,22,48,52,C.wall);
+    R(x,22,48,1,C.wallSh);
+    R(x,73,48,1,C.wallSh);
+    R(x,22,1,52,C.wallHi);
+    R(x+47,22,1,52,C.wallSh);
+  }
+  R(0,22,W,2,C.wallDk);
+  R(0,24,W,1,C.wallHi);
+  R(0,74,W,2,C.wallDk2);
+  R(0,76,W,2,C.wallDk);
+
+  // ISO Class 5 sign
+  R(54,32,34,22,'#284058');
+  R(55,33,32,20,'#3a5c80');
+  R(55,33,32,6,C.badge);
+  R(55,39,32,1,'#a87810');
+  txt('CLASS 5', 71, 38, 4, '#3a2410', 'center');
+  txt('ISO', 71, 46, 4, '#e8eef6', 'center');
+  txt('FAB-4', 71, 52, 4, '#a8c4e0', 'center');
+
+  // Yield chart
+  R(370,30,56,26,C.suit);
+  R(370,30,56,1,'#b8a880');
+  R(370,55,56,1,'#b8a880');
+  R(370,30,1,26,'#d0c2a0');
+  R(425,30,1,26,'#b8a880');
+  txt('YIELD', 373, 36, 4, '#3a3018');
+  const bars = [[6,4],[11,6],[16,9],[21,5],[26,10],[31,12],[36,13],[41,15],[46,16]];
+  for (let i=0;i<bars.length;i++){
+    const [bx,bh] = bars[i];
+    const col = i<5 ? C.grn : (i<7?'#58b078':C.grnHi);
+    R(370+bx, 50-bh, 3, bh, col);
+  }
+  R(374,51,48,1,'#6c5430');
+
+  // Clock
+  R(220,30,20,20,'#1a1620');
+  R(221,31,18,18,'#e8e2d0');
+  R(229,33,2,2,'#3a3024');
+  R(229,45,2,2,'#3a3024');
+  R(223,39,2,2,'#3a3024');
+  R(235,39,2,2,'#3a3024');
+  // hands rotate slowly with day
+  const ang = (state.t * 0.005) % (Math.PI*2);
+  const cx = 230, cy = 40;
+  R(229,36,2,4,'#1a1620');
+  R(230,39, Math.round(Math.cos(ang)*4)+1, 2, C.red);
+
+  // HEPA vents
+  for (const tx of [140, 290]){
+    R(tx,30,50,14,'#cfc7b0');
+    R(tx,30,50,1,'#a89880');
+    R(tx,43,50,1,'#a89880');
+    R(tx,30,1,14,'#a89880');
+    R(tx+49,30,1,14,'#a89880');
+    for (const sy of [33,36,39,41]){
+      R(tx+3, sy, 44, 1, '#8a7858');
+    }
+  }
+}
+
+// overhead conveyor with moving cart
+function drawConveyor(){
+  R(0,52,W,2,'#3a3344');
+  R(0,54,W,3,'#585068');
+  R(0,57,W,1,'#7a708c');
+  R(0,58,W,1,'#3a3344');
+  for (const bx of [30,110,190,270,350,430]){
+    R(bx,46,3,6,'#3a3344');
+  }
+  // moving cart
+  const cx = ((state.t * 0.7) % 530) - 32;
+  // hanger
+  R(cx+14,58,2,3,'#3a3344');
+  R(cx+10,61,10,2,'#585068');
+  // cassette
+  R(cx+6,63,18,12,C.org);
+  R(cx+6,63,18,2,C.orgHi);
+  R(cx+6,73,18,2,C.orgSh);
+  R(cx+6,63,1,12,C.orgHi);
+  R(cx+23,63,1,12,C.orgSh);
+  R(cx+8,66,14,1,'#3a2008');
+  R(cx+8,68,14,1,'#3a2008');
+  R(cx+8,70,14,1,'#3a2008');
+  R(cx+8,64,3,1,C.parchment);
+}
+
+// ============================================================
+//  STATION DRAW HELPERS
+// ============================================================
+
+function drawFoupShelf(){
+  ctx.save();
+  ctx.translate(32, 96);
+  // top cap
+  R(0,0,78,4,'#3a3344');
+  R(0,0,78,1,'#585068');
+  // main frame
+  R(2,4,74,102,'#7a728a');
+  R(2,4,74,2,'#a89cb8');
+  R(2,104,74,2,'#4c4458');
+  // side posts
+  R(0,4,4,106,'#3a3344');
+  R(74,4,4,106,'#3a3344');
+  R(1,4,1,106,'#585068');
+  R(74,4,1,106,'#585068');
+  // shelves
+  for (const sy of [32,62,92]){
+    R(4,sy,70,3,'#3a3344');
+    R(4,sy+3,70,1,'#1a1620');
+  }
+  // base feet
+  R(0,110,6,4,'#3a3344');
+  R(72,110,6,4,'#3a3344');
+
+  // cassettes on shelves — 4 full + 1 empty bottom-left
+  function cassette(ox, oy, light){
+    const A = light ? '#f4c84c' : C.org;
+    const Hi = light ? '#fce078' : C.orgHi;
+    const Sh = light ? '#b88828' : C.orgSh;
+    R(ox,oy,22,20,A);
+    R(ox,oy,22,2,Hi);
+    R(ox,oy+18,22,2,Sh);
+    R(ox,oy+2,2,16,Hi);
+    R(ox+20,oy+2,2,16,Sh);
+    R(ox+6,oy-2,10,2,'#3a2008');
+    R(ox+3,oy+5,16,1,'#3a2008');
+    R(ox+3,oy+8,16,1,'#3a2008');
+    R(ox+3,oy+11,16,1,'#3a2008');
+    R(ox+3,oy+14,16,1,'#3a2008');
+    R(ox+3,oy+3,6,2,C.parchment);
+  }
+  cassette(8,12,false);
+  cassette(40,12,true);
+  cassette(8,42,true);
+  cassette(40,42,false);
+  cassette(40,72,false);
+  // empty slot shadow
+  R(10,78,22,14,'#4c4458');
+  R(10,78,22,2,'#3a3344');
+  ctx.restore();
+}
+
+function drawLitho(){
+  ctx.save();
+  ctx.translate(168, 104);
+
+  // laser beam pulse
+  const pulse = 0.55 + 0.45 * Math.abs(Math.sin(state.t * 0.06));
+  ctx.globalAlpha = 0.45 * pulse;
+  R(62,-58,4,58,C.laser);
+  ctx.globalAlpha = 0.85 * pulse;
+  R(63,-58,2,58,C.laserHi);
+  ctx.globalAlpha = 0.55 * pulse;
+  R(63,-58,2,58,C.laserCore);
+  ctx.globalAlpha = 1;
+  // sparks (blink)
+  if ((state.t>>2) & 1){
+    for (const [x,y] of [[58,-4],[68,-2],[60,-12],[69,-18],[56,-30],[71,-40]]){
+      P(x,y, (x+y)&1 ? C.laserHi : C.laser);
+    }
+  }
+
+  // emitter
+  R(48,0,32,6,C.boot);
+  R(48,0,32,1,C.bootHi);
+  R(56,-2,16,2,'#3a3344');
+  R(60,-4,8,2,'#1a1620');
+
+  // top bevel
+  R(6,4,116,6,C.yelSh);
+  R(6,4,116,2,C.badge);
+
+  // body
+  R(6,10,116,84,C.yel);
+  R(6,10,116,2,C.yelHi);
+  R(6,92,116,2,C.yelSh);
+  R(6,10,2,84,C.yelHi);
+  R(120,10,2,84,C.yelSh);
+
+  // side vents
+  for (const vx of [10,112]){
+    R(vx,20,6,44,C.boot);
+    for (let i=0;i<10;i++){
+      R(vx+1,22+i*4,4,1,C.bootHi);
+    }
+  }
+
+  // screen
+  R(22,20,40,22,'#1a2030');
+  R(22,20,40,1,C.panelDk);
+  R(22,41,40,1,'#0c1018');
+  R(23,22,38,19,C.screen);
+  // running content
+  const off = (state.t>>2) % 4;
+  R(25,24,20,2,C.laser);
+  R(25,27+off,14,1,C.grnHi);
+  R(25,29,18,1,C.grnHi);
+  R(25,31,10,1,C.grnHi);
+  R(25,33,22,1,C.badge);
+  R(25,35,16,1,C.badge);
+  R(25,37,20,1,C.laser);
+  // waveform animated
+  for (let i=0;i<10;i++){
+    const h = Math.abs(Math.sin((state.t*0.1)+i*0.7)*4)+1;
+    R(49+i, 30, 1, h|0, C.laser);
+  }
+
+  // right control panel
+  R(70,20,38,22,'#3a2c10');
+  R(70,20,38,1,'#6c5430');
+  R(71,22,36,19,'#5a4420');
+  // LEDs
+  R(74,24,3,3,C.grn); P(75,25,C.grnXHi);
+  R(80,24,3,3,C.red); P(81,25,C.redHi);
+  R(86,24,3,3,C.badge); P(87,25,C.parchment);
+  R(92,24,3,3,C.grn);
+  if ((state.t>>3)&1) P(93,25,C.grnXHi);
+  // gauge — show actual machine state
+  R(74,30,30,3,'#1a1620');
+  const lithoFill = state.lithoBusy>0 ? (1 - state.lithoBusy/180) * 28 : (state.lithoOut?28:20);
+  R(75,31, Math.max(1, lithoFill|0), 1, C.grnHi);
+  R(95,31,6,1,C.badge);
+  // buttons
+  for (const bx of [74,80,86,92]) R(bx,36,4,3,'#1a1620');
+  R(98,36,6,3,C.red); R(99,37,4,1,C.redHi);
+
+  // stage door
+  R(32,56,58,22,'#3a3024');
+  R(32,56,58,1,'#1a1620');
+  R(33,57,56,20,'#6c5430');
+  R(33,57,56,1,'#8a7858');
+  R(34,59,54,2,'#1a1620');
+  R(34,62,54,14,C.boot);
+  // wafer inside (visible when in process)
+  if (state.lithoBusy > 0 || state.lithoOut){
+    const shimmer = (state.t>>3) & 1 ? C.siXHi : C.siHi;
+    R(46,65,30,8,C.si);
+    R(46,65,30,1,C.siMid);
+    R(48,67,26,4,C.siMid);
+    R(48,68,26,2,shimmer);
+    R(50,68,2,2,C.siXHi);
+  }
+
+  // Brand
+  R(48,82,32,8,C.boot);
+  txt('LITHO-7', 64, 88, 6, C.badge, 'center');
+
+  // base
+  R(6,94,116,4,C.boot);
+  R(6,94,116,1,C.bootHi);
+  R(8,98,8,4,C.boot);
+  R(112,98,8,4,C.boot);
+
+  ctx.restore();
+}
+
+function drawEtcher(){
+  ctx.save();
+  ctx.translate(338, 116);
+
+  // plasma wisps (3 phase-shifted)
+  function wisp(ox, phase){
+    const tp = (state.t*0.04 + phase) % 1;
+    if (tp < 0.05 || tp > 0.95) return;
+    const yOff = -tp * 22;
+    const a = tp < 0.15 ? tp/0.15 : (tp > 0.85 ? (1-tp)/0.15 : 1);
+    ctx.globalAlpha = 0.7 * a;
+    R(ox, -2 + yOff, 2, 2, '#d098e0');
+    ctx.globalAlpha = 0.7 * a;
+    R(ox+2, -4 + yOff, 2, 2, '#e8b0f4');
+    ctx.globalAlpha = 0.5 * a;
+    R(ox, -6 + yOff, 3, 2, '#f4c8ff');
+    ctx.globalAlpha = 1;
+  }
+  wisp(36, 0);
+  wisp(46, 0.33);
+  wisp(56, 0.66);
+
+  // dome top
+  R(28,-2,36,2,'#3a2c48');
+  R(26,0,40,14,'#382c48');
+  R(26,0,40,1,'#5a4870');
+  R(26,13,40,1,'#1a1024');
+  R(26,0,2,14,'#5a4870');
+  R(64,0,2,14,'#1a1024');
+  // glass
+  R(30,2,32,10,'#2a1830');
+  R(32,3,28,8,'#7a3878');
+  R(32,3,28,2,'#a85098');
+  R(32,9,28,2,'#4c1c54');
+  // plasma glow inside (pulses with activity)
+  const active = state.etchBusy > 0;
+  const glow = active ? (0.7 + 0.3 * Math.sin(state.t*0.2)) : 0.5;
+  ctx.globalAlpha = glow;
+  R(38,5,14,4,C.plasma);
+  R(40,6,10,2,C.plasmaHi);
+  R(42,6,6,1,C.plasmaCore);
+  R(55,5,3,2,C.plasma);
+  R(34,7,2,2,C.plasma);
+  ctx.globalAlpha = 1;
+
+  // main body
+  R(14,14,64,64,C.pur);
+  R(14,14,64,2,C.purHi);
+  R(14,76,64,2,C.purSh);
+  R(14,14,2,64,C.purHi);
+  R(76,14,2,64,C.purSh);
+
+  // cooling tubes both sides
+  for (const tx of [4,80]){
+    R(tx,20,8,50,'#4c3c5c');
+    R(tx+1,21,6,48,'#6a5878');
+    for (let i=0;i<8;i++){
+      R(tx,22+i*6,8,2,'#382c48');
+    }
+  }
+
+  // door window
+  R(22,30,40,30,'#1a1024');
+  R(23,31,38,28,'#2a1830');
+  R(24,32,36,26,'#3a2c48');
+  // chamber wafer inside
+  if (state.etchBusy > 0 || state.etchOut){
+    const shimmer = (state.t>>2)&1 ? C.plasmaCore : C.plasmaHi;
+    R(30,44,24,4,C.si);
+    R(30,44,24,1,C.siMid);
+    R(32,45,20,2,shimmer);
+    ctx.globalAlpha = active ? 0.5 + 0.5*Math.sin(state.t*0.3) : 0;
+    R(28,42,28,8,C.plasma);
+    ctx.globalAlpha = 1;
+  }
+
+  // control strip
+  R(22,62,40,12,'#3a2c10');
+  R(22,62,40,1,'#6c5430');
+  R(23,63,38,10,'#5a4420');
+  // LEDs
+  R(26,65,3,3,active ? C.red : C.grn);
+  if (((state.t>>3)&1) && active) P(27,66,C.redHi);
+  R(32,65,3,3,C.badge);
+  R(38,65,3,3,C.plasma);
+  // mini gauge
+  R(46,65,14,3,'#1a1620');
+  const eFill = state.etchBusy>0 ? (1 - state.etchBusy/180) * 12 : (state.etchOut?12:8);
+  R(47,66, Math.max(1,eFill|0), 1, C.plasmaHi);
+
+  // brand
+  R(20,78,44,8,C.boot);
+  txt('ETCHER-3', 42, 84, 6, C.plasma, 'center');
+
+  // base
+  R(14,78,64,2,'#382c48');
+  R(16,80,4,4,'#382c48');
+  R(72,80,4,4,'#382c48');
+
+  ctx.restore();
+}
+
+function drawCrate(){
+  ctx.save();
+  ctx.translate(432, 200);
+  // back crate
+  R(0,0,30,22,C.crate);
+  R(0,0,30,2,C.crateHi);
+  R(0,20,30,2,C.crateSh);
+  R(0,0,2,22,C.crateHi);
+  R(28,0,2,22,C.crateSh);
+  R(2,10,26,2,C.crateSh);
+  R(13,2,4,18,C.crateSh);
+  R(14,3,2,16,C.crate);
+  // count label
+  R(6,3,18,8,C.boot);
+  txt('Si x' + state.silicon, 15, 9, 6, C.badge, 'center');
+  ctx.restore();
+}
+
+// ============================================================
+//  CHARACTERS
+// ============================================================
+
+// NPC — senior engineer worker that stands by the etch
+function drawNpc(){
+  const baseX = 312, baseY = 188;
+  const bob = Math.sin(state.t * 0.04) > 0 ? -1 : 0;
+  ctx.save();
+  ctx.translate(baseX, baseY + bob);
+  // hood/head
+  R(2,0,10,2,C.outline);
+  R(1,2,12,8,C.suit);
+  R(1,2,12,1,C.suitHi);
+  R(0,3,1,6,C.outline);
+  R(13,3,1,6,C.outline);
+  // visor
+  R(3,5,8,3,C.visor);
+  R(3,5,8,1,C.visorMid);
+  // eyes
+  P(5,6,C.black);
+  P(9,6,C.black);
+  // body
+  R(1,10,12,10,C.suit);
+  R(1,10,12,1,C.suitHi);
+  R(0,11,1,8,C.outline);
+  R(13,11,1,8,C.outline);
+  R(1,20,12,1,C.suitSh);
+  // badge
+  R(6,12,2,2,C.badge);
+  // arms with clipboard
+  R(0,12,1,5,C.outline);
+  R(0,12,2,5,C.suit);
+  R(13,12,1,5,C.outline);
+  R(13,12,2,5,C.suit);
+  // clipboard
+  R(11,14,4,5,C.parchment);
+  R(11,14,4,1,'#c8a878');
+  P(13,16,C.outline);
+  P(13,17,C.outline);
+  // legs (white suit pants)
+  R(2,21,4,4,C.suit);
+  R(8,21,4,4,C.suit);
+  R(2,25,4,1,C.boot);
+  R(8,25,4,1,C.boot);
+  ctx.restore();
+}
+
+// Player — sprite drawn around foot point (px, py). The sprite is
+// 14 wide × 26 tall, with the foot at the bottom-middle.
+function drawPlayer(){
+  const x = (state.px - 7) | 0;
+  const y = (state.py - 26) | 0;
+  const dir = state.pdir;
+  // walk bob — body lifts 1px on certain frames
+  const bob = (state.pmove && (state.pwalk === 1 || state.pwalk === 3)) ? -1 : 0;
+  // leg stride offsets per dir
+  const stride = state.pwalk;
+
+  ctx.save();
+  ctx.translate(x, y + bob);
+
+  // HEAD
+  if (dir === 'down' || dir === 'right' || dir === 'left'){
+    // hood outline + head
+    R(2,0,10,2,C.outline);
+    R(1,2,12,8,C.suit);
+    R(1,2,12,1,C.suitHi);
+    R(0,3,1,6,C.outline);
+    R(13,3,1,6,C.outline);
+    // visor
+    if (dir === 'down'){
+      R(3,5,8,3,C.visor);
+      R(3,5,8,1,C.visorMid);
+      P(5,6,C.black);
+      P(8,6,C.black);
+    } else {
+      // side: visor only on the facing side
+      const flip = dir === 'left';
+      if (!flip){
+        R(5,5,7,3,C.visor);
+        R(5,5,7,1,C.visorMid);
+        P(8,6,C.black);
+      } else {
+        R(2,5,7,3,C.visor);
+        R(2,5,7,1,C.visorMid);
+        P(5,6,C.black);
+      }
+    }
+  } else {
+    // back of hood (no face)
+    R(2,0,10,2,C.outline);
+    R(1,2,12,8,C.suit);
+    R(1,2,12,1,C.suitHi);
+    R(2,8,10,2,C.suitSh);
+    R(0,3,1,6,C.outline);
+    R(13,3,1,6,C.outline);
+  }
+
+  // TORSO
+  R(1,10,12,10,C.suit);
+  R(1,10,12,1,C.suitHi);
+  R(0,11,1,8,C.outline);
+  R(13,11,1,8,C.outline);
+  R(1,20,12,1,C.suitSh);
+  if (dir === 'down'){
+    R(6,12,2,2,C.badge);
+    R(6,14,2,1,C.yelSh);
+  }
+
+  // ARMS / GLOVES
+  // For down/up: gloves on both sides
+  // For side: gloves only on the front-facing side
+  function gloveL(){ R(0,16,2,3,C.gloveSh); R(0,15,2,1,C.glove); }
+  function gloveR(){ R(12,16,2,3,C.gloveSh); R(12,15,2,1,C.glove); }
+  if (dir === 'down' || dir === 'up'){
+    gloveL(); gloveR();
+  } else if (dir === 'right'){
+    gloveR();
+  } else if (dir === 'left'){
+    gloveL();
+  }
+
+  // CARRY — FOUP held in front
+  if (state.carry){
+    let cx, cy;
+    if (dir === 'down'){ cx = 3; cy = 17; }
+    else if (dir === 'up'){ cx = 3; cy = 11; }
+    else if (dir === 'right'){ cx = 9; cy = 16; }
+    else { cx = -2; cy = 16; }
+
+    const carryCol =
+      state.carry === 'raw' ? C.org :
+      state.carry === 'exposed' ? C.badge :
+      C.grnHi;
+    const carryHi =
+      state.carry === 'raw' ? C.orgHi :
+      state.carry === 'exposed' ? '#fce078' :
+      C.grnXHi;
+    const carrySh =
+      state.carry === 'raw' ? C.orgSh :
+      state.carry === 'exposed' ? C.yelSh :
+      C.grn;
+    R(cx,cy,8,6,carryCol);
+    R(cx,cy,8,1,carryHi);
+    R(cx,cy+5,8,1,carrySh);
+    R(cx+1,cy+2,6,1,C.black);
+    R(cx+1,cy+4,6,1,C.black);
+    // shine
+    P(cx+1, cy+1, C.parchment);
+  }
+
+  // LEGS — animate by stride
+  let legShift = 0;
+  if (state.pmove){
+    legShift = (stride === 1) ? -1 : (stride === 3 ? 1 : 0);
+  }
+  R(3 + legShift, 21, 3, 4, C.suit);
+  R(8 - legShift, 21, 3, 4, C.suit);
+  R(3 + legShift, 25, 3, 1, C.boot);
+  R(8 - legShift, 25, 3, 1, C.boot);
+  R(2,26,10,1,C.outline);  // floor shadow line as outline
+
+  ctx.restore();
+}
+
+// Interaction prompt above station door
+function drawPrompt(){
+  if (!state.prompt) return;
+  const s = state.prompt;
+  const text = '[Space] ' + s.prompt;
+  // bubble
+  const w = text.length * 7 + 10;
+  const x = s.doorX - w/2;
+  const y = s.doorY - 32;
+  R(x, y, w, 14, C.wood);
+  R(x, y, w, 1, C.woodHi);
+  R(x, y+13, w, 1, C.woodDk);
+  txt(text, s.doorX, y+10, 7, C.parchment, 'center');
+  // tail
+  R(s.doorX-1, y+14, 2, 2, C.wood);
+}
+
+// Speech bubble (NPC or self)
+function drawSpeech(){
+  if (!state.speech) return;
+  const s = state.speech;
+  const px = s.who === 'npc' ? 319 : (state.px|0);
+  const py = s.who === 'npc' ? 180 : (state.py - 32);
+  const text = s.text;
+  const w = Math.max(44, text.length * 6 + 12);
+  const x = px - w/2;
+  const y = py - 18;
+  R(x, y, w, 16, C.parchment);
+  R(x, y, w, 1, C.parchHi);
+  R(x, y+15, w, 1, C.parchMid);
+  R(x, y, 1, 16, C.parchHi);
+  R(x+w-1, y, 1, 16, C.parchMid);
+  txt(text, px, y+11, 7, '#3a2818', 'center');
+  // tail
+  R(px-1, y+16, 2, 2, C.parchment);
+  P(px-1, y+18, C.parchMid);
+  P(px, y+18, C.parchMid);
+
+  // confetti for shipping moments
+  if (text.includes('Si')){
+    for (let i=0;i<3;i++){
+      const phase = (state.t * 0.08 + i*0.33) % 1;
+      if (phase < 0.1 || phase > 0.9) continue;
+      const fx = px - 8 + i*8;
+      const fy = y + 16 + phase * 10;
+      const c = [C.badge, C.red, C.grnHi][i];
+      P(fx, fy|0, c);
+    }
+  }
+}
+
+// Top message ribbon
+function drawMsg(){
+  if (!state.msg) return;
+  const text = state.msg.text;
+  const w = text.length * 7 + 18;
+  const x = (W - w) / 2;
+  const y = 30;
+  R(x, y, w, 16, C.wood);
+  R(x, y, w, 1, C.woodHi);
+  R(x, y+15, w, 1, C.woodDk);
+  txt(text, W/2, y+11, 7, C.parchment, 'center');
+}
+
+// ============================================================
+//  HUD — top stats bar, minimap, inventory
+// ============================================================
+
+function drawHud(){
+  // TOP BAR
+  R(0,0,W,22,C.wood);
+  R(0,0,W,2,C.woodHi);
+  R(0,20,W,2,C.woodDk);
+  R(0,2,W,1,C.woodMidHi);
+  R(2,3,W-4,17,C.woodMid);
+  R(2,3,W-4,1,'#7a5430');
+  R(2,19,W-4,1,'#2a1c0c');
+
+  // Stat 1: Silicon
+  R(8,5,100,13,'#4a2c18');
+  R(8,5,100,1,C.woodHi);
+  R(8,17,100,1,'#2a1810');
+  // silicon gem
+  R(13,7,4,1,C.si); R(12,8,6,1,C.siMid);
+  R(11,9,8,3,C.siHi); R(12,12,6,2,C.siMid);
+  R(13,14,4,1,C.si); R(13,9,2,2,C.siXHi);
+  txt('Si x' + state.silicon, 22, 14, 6, C.parchment);
+
+  // Stat 2: Power
+  R(116,5,100,13,'#4a2c18');
+  R(116,5,100,1,C.woodHi);
+  R(116,17,100,1,'#2a1810');
+  // bolt
+  R(123,7,2,2,C.badge); R(121,9,4,1,C.badge);
+  R(122,10,3,1,'#fce078'); R(121,11,4,1,C.badge);
+  R(122,12,2,3,C.badge); P(123,10,C.parchment);
+  txt('PWR ' + (state.power|0) + '%', 130, 14, 6, C.parchment);
+  // mini bar
+  R(178,9,32,5,C.woodDk);
+  const pfill = Math.max(0, Math.min(28, (state.power/100)*28));
+  const pcol = state.power < 25 ? C.red : (state.power < 50 ? C.badge : C.grnHi);
+  R(179,10, pfill|0, 3, pcol);
+
+  // Stat 3: Temp
+  R(224,5,116,13,'#4a2c18');
+  R(224,5,116,1,C.woodHi);
+  R(224,17,116,1,'#2a1810');
+  // thermometer
+  R(230,7,2,6,'#e8e2d0'); R(229,13,4,2,C.red);
+  R(230,8,1,5,C.red);
+  txt('TEMP ' + state.temp.toFixed(1) + 'C', 238, 14, 6, C.parchment);
+
+  // Stat 4: Day
+  R(348,5,124,13,'#4a2c18');
+  R(348,5,124,1,C.woodHi);
+  R(348,17,124,1,'#2a1810');
+  // calendar
+  R(352,7,9,9,C.red); R(352,7,9,3,'#7a2818');
+  P(353,8,C.parchment); P(359,8,C.parchment);
+  R(353,11,7,4,C.parchment);
+  R(354,12,2,1,C.red); R(357,12,2,1,C.red);
+  txt('DAY ' + state.day + ' / SPRG', 364, 14, 6, C.parchment);
+
+  // MINIMAP
+  R(388,28,84,58,C.wood);
+  R(388,28,84,2,C.woodHi);
+  R(388,84,84,2,C.woodDk);
+  R(388,28,2,58,C.woodHi);
+  R(470,28,2,58,C.woodDk);
+  R(390,30,80,8,C.woodMid);
+  txt('FAB-4 MAP', 430, 36, 5, C.parchment, 'center');
+  // map area
+  R(391,38,78,45,'#243046');
+  for (let yy=38;yy<83;yy+=2)
+    for (let xx=391;xx<469;xx+=2)
+      P(xx,yy,'#2c3a52');
+  // outline
+  ctx.strokeStyle = C.panelMid;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(394.5, 41.5, 72, 38);
+  // equipment dots
+  R(398,48,6,20,C.org); R(398,48,6,2,C.orgHi);
+  R(416,50,22,20,C.yel); R(416,50,22,2,C.yelHi);
+  R(444,52,16,18,'#7a3878'); R(444,52,16,2,'#a85098');
+  // conveyor line
+  R(394,44,72,1,C.laser);
+  // player dot (mapped)
+  const mx = 394 + (state.px / W) * 72;
+  const my = 41 + ((state.py - 78) / 160) * 38;
+  R((mx-1)|0, (my-1)|0, 3, 3, C.grnHi);
+  P(mx|0, my|0, C.parchment);
+  // NPC dot
+  const nmx = 394 + (319/W)*72;
+  const nmy = 41 + ((196-78)/160)*38;
+  R(nmx|0, nmy|0, 2, 2, C.laser);
+
+  // BOTTOM INVENTORY
+  R(80,238,320,30,C.wood);
+  R(80,238,320,2,C.woodHi);
+  R(80,266,320,2,C.woodDk);
+  R(80,238,2,30,C.woodHi);
+  R(398,238,2,30,C.woodDk);
+  R(82,240,316,1,C.woodMidHi);
+
+  // 8 slots
+  const slots = [
+    { item: state.carry === 'raw' ? 'raw' : (state.carry === 'exposed' ? 'exposed' : (state.carry === 'etched' ? 'etched' : null)) , count: state.carry ? 1 : 0, label:'wafer' },
+    { item: 'photoresist', count: 999, label:'PR' },
+    { item: 'etchant', count: 999, label:'ET' },
+    { item: 'mask', count: 1, label:'mask' },
+    { item: null, count: 0 },
+    { item: null, count: 0 },
+    { item: 'wrench', count: 1 },
+    { item: 'coffee', count: 1 },
+  ];
+  for (let i=0;i<8;i++){
+    const sx = 86 + i*39;
+    const sy = 243;
+    const sel = i === 0; // wafer slot always "selected"
+    if (sel){
+      R(sx-1,sy-1,38,22,C.badge);
+    }
+    R(sx,sy,36,20,'#5a3c20');
+    R(sx+1,sy+1,34,18,C.woodMidHi);
+    R(sx+1,sy+1,34,1,'#a87a48');
+    drawInvIcon(sx, sy, slots[i]);
+  }
+}
+
+function drawInvIcon(sx, sy, slot){
+  if (!slot.item) return;
+  const cx = sx + 18, cy = sy + 10;
+  switch (slot.item){
+    case 'raw': {
+      // raw wafer (gray)
+      R(cx-7,cy-4,14,1,C.si);
+      R(cx-8,cy-3,16,1,C.siMid);
+      R(cx-9,cy-2,18,6,C.siHi);
+      R(cx-8,cy+4,16,1,C.siMid);
+      R(cx-7,cy+5,14,1,C.si);
+      R(cx-6,cy-1,3,2,C.siXHi);
+      P(cx-2,cy-2,C.siMid);
+      break;
+    }
+    case 'exposed': {
+      // yellow tint wafer
+      R(cx-7,cy-4,14,1,C.yelSh);
+      R(cx-8,cy-3,16,1,C.yel);
+      R(cx-9,cy-2,18,6,C.yelHi);
+      R(cx-8,cy+4,16,1,C.yel);
+      R(cx-7,cy+5,14,1,C.yelSh);
+      R(cx-6,cy-1,3,2,'#fff2c8');
+      break;
+    }
+    case 'etched': {
+      // green tint wafer
+      R(cx-7,cy-4,14,1,C.grn);
+      R(cx-8,cy-3,16,1,C.grnHi);
+      R(cx-9,cy-2,18,6,C.grnXHi);
+      R(cx-8,cy+4,16,1,C.grnHi);
+      R(cx-7,cy+5,14,1,C.grn);
+      P(cx-6,cy-1,C.parchment);
+      break;
+    }
+    case 'photoresist': {
+      R(cx-2,cy-6,4,2,C.bootHi);
+      R(cx-3,cy-4,6,1,C.siMid);
+      R(cx-3,cy-3,6,11,'#e8e2d0');
+      R(cx-3,cy-3,6,1,C.parchment);
+      R(cx-3,cy+7,6,1,C.wallDk);
+      R(cx-2,cy,4,7,'#f48868');
+      R(cx-2,cy,4,1,'#ffaa88');
+      break;
+    }
+    case 'etchant': {
+      R(cx-2,cy-6,4,2,C.bootHi);
+      R(cx-3,cy-4,6,1,C.siMid);
+      R(cx-3,cy-3,6,11,'#e8e2d0');
+      R(cx-3,cy-3,6,1,C.parchment);
+      R(cx-3,cy+7,6,1,C.wallDk);
+      R(cx-2,cy,4,7,C.plasma);
+      R(cx-2,cy,4,1,C.plasmaHi);
+      break;
+    }
+    case 'mask': {
+      R(cx-7,cy-5,14,10,C.boot);
+      R(cx-6,cy-4,12,8,C.panelDk);
+      R(cx-5,cy-3,10,6,C.laser);
+      R(cx-4,cy-2,2,4,C.boot);
+      R(cx,cy-2,2,4,C.boot);
+      R(cx+2,cy-2,2,4,C.boot);
+      break;
+    }
+    case 'wrench': {
+      R(cx-2,cy-6,4,3,'#a8a8c0');
+      R(cx-3,cy-6,2,2,C.boot);
+      R(cx+1,cy-6,2,2,C.boot);
+      R(cx-1,cy-3,2,9,'#787890');
+      R(cx-2,cy+5,4,2,'#a8a8c0');
+      break;
+    }
+    case 'coffee': {
+      R(cx-5,cy-3,10,9,'#a87838');
+      R(cx-5,cy-3,10,2,'#c49858');
+      R(cx-3,cy-1,6,2,'#3a2008');
+      R(cx-3,cy-1,6,1,'#5a3020');
+      R(cx+5,cy-1,2,4,'#7a5828');
+      // steam
+      if ((state.t>>3)&1){
+        P(cx-2, cy-6, C.suitSh);
+        P(cx+1, cy-7, C.suitSh);
+      }
+      break;
+    }
+  }
+  // count badge bottom-right (only if >0 and < 999)
+  if (slot.count && slot.count < 999){
+    txt(slot.count, sx + 33, sy + 18, 5, C.parchment, 'end');
+  }
+}
+
+// ============================================================
+//  NEW UI ELEMENTS — minigame, combo, quest, rush, achievements
+// ============================================================
+
+function drawMiniGame(){
+  if (!state.miniGame) return;
+  const m = state.miniGame;
+
+  // dim play area (not HUD)
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 22, W, H-22-32);
+
+  const bw = 160, bh = 16;
+  const bx = (W - bw) / 2;
+  const by = 110;
+
+  // frame
+  R(bx-5, by-22, bw+10, bh+34, C.wood);
+  R(bx-4, by-21, bw+8, 1, C.woodHi);
+  R(bx-4, by+bh+12, bw+8, 1, C.woodDk);
+  R(bx-4, by-21, 1, bh+33, C.woodHi);
+  R(bx+bw+3, by-21, 1, bh+33, C.woodDk);
+  R(bx-2, by-19, bw+4, 14, C.woodMid);
+
+  // title
+  const title = m.type === 'litho' ? 'LITHO 캘리브레이션' : 'ETCH 캘리브레이션';
+  txt(title, W/2, by-9, 7, C.parchment, 'center');
+
+  // bar background
+  R(bx, by, bw, bh, C.boot);
+  R(bx, by, bw, 1, C.bootHi);
+  // zones (bad red full, then good yellow band, then perfect green band)
+  R(bx+1, by+1, bw-2, bh-2, C.red);
+  const goodX = Math.round(bw * 0.28), goodW = Math.round(bw * 0.44);
+  R(bx + goodX, by+1, goodW, bh-2, C.badge);
+  const perfX = Math.round(bw * 0.45), perfW = Math.round(bw * 0.10);
+  R(bx + perfX, by+1, perfW, bh-2, C.grnHi);
+  // tick marks at zone boundaries
+  R(bx + goodX, by, 1, bh, C.parchment);
+  R(bx + goodX + goodW, by, 1, bh, C.parchment);
+
+  // marker
+  const mx = bx + m.pos * bw;
+  R(mx-1, by-3, 3, bh+6, C.parchment);
+  R(mx, by-3, 1, bh+6, C.black);
+
+  // hint / result
+  if (m.result){
+    const cmap = { perfect: C.grnHi, good: C.badge, bad: C.red };
+    const tmap = { perfect: '⭐ PERFECT! +1 등급', good: 'GOOD ✓', bad: '✗ SCRAP!' };
+    txt(tmap[m.result], W/2, by+bh+10, 8, cmap[m.result], 'center');
+  } else {
+    txt('Space 로 정지 — 중앙(녹색)이 PERFECT', W/2, by+bh+10, 6, C.parchHi, 'center');
+  }
+}
+
+function drawCombo(){
+  if (state.combo < 2) return;
+  // skip if rush is occupying the same spot
+  if (state.rush) return;
+  const text = 'x' + state.combo + ' COMBO';
+  const w = text.length * 8 + 18;
+  const x = (W - w) / 2;
+  const y = 26;
+
+  // pulse subtle
+  const pulse = 1 + 0.08 * Math.sin(state.t * 0.35);
+  ctx.save();
+  ctx.translate(W/2, y+8);
+  ctx.scale(pulse, pulse);
+  ctx.translate(-W/2, -(y+8));
+
+  R(x, y, w, 16, C.red);
+  R(x+1, y+1, w-2, 14, '#7a2818');
+  R(x+1, y+1, w-2, 1, C.redHi);
+  txt(text, W/2, y+11, 8, C.badge, 'center');
+
+  // timer bar
+  const ratio = state.comboTimer / (60*15);
+  const tw = Math.max(0, ratio * (w-4)) | 0;
+  R(x+2, y+13, w-4, 2, C.woodDk);
+  R(x+2, y+13, tw, 2, C.grnHi);
+
+  ctx.restore();
+}
+
+function drawQuest(){
+  if (!state.quest) return;
+  const q = state.quest;
+  const x = 4, y = 24, w = 138, h = 22;
+  R(x, y, w, h, C.wood);
+  R(x, y, w, 1, C.woodHi);
+  R(x, y+h-1, w, 1, C.woodDk);
+  R(x, y, 1, h, C.woodHi);
+  R(x+w-1, y, 1, h, C.woodDk);
+  R(x+1, y+1, w-2, 1, C.woodMidHi);
+
+  // scroll icon
+  R(x+3, y+4, 8, 14, C.parchment);
+  R(x+3, y+4, 8, 1, C.parchHi);
+  R(x+3, y+17, 8, 1, C.parchMid);
+  R(x+4, y+7, 6, 1, C.wood);
+  R(x+4, y+10, 6, 1, C.wood);
+  R(x+4, y+13, 4, 1, C.wood);
+
+  // text
+  txt('QUEST', x+14, y+9, 6, C.badge);
+  txt(q.label, x+14, y+17, 5, C.parchment);
+  // progress (right)
+  const pt = q.progress + '/' + q.target;
+  txt(pt, x+w-5, y+9, 7, C.grnHi, 'end');
+  // bar
+  R(x+w-44, y+12, 38, 5, C.boot);
+  const pf = Math.min(1, q.progress / q.target);
+  R(x+w-43, y+13, (36*pf)|0, 3, C.grnHi);
+  // reward badge
+  txt('+' + q.reward, x+w-5, y+19, 5, C.badge, 'end');
+}
+
+function drawRush(){
+  if (!state.rush) return;
+  const r = state.rush;
+  const secs = Math.ceil(r.remaining / 60);
+  const text = '🚨 RUSH ORDER  ' + r.shipped + '/' + r.target + '  ' + secs + 's  ×2 보상';
+  const w = 220;
+  const x = (W - w) / 2;
+  const y = 24;
+
+  const flash = (state.t >> 3) & 1;
+  R(x, y, w, 20, flash ? C.red : '#7a2818');
+  R(x, y, w, 1, C.redHi);
+  R(x, y+19, w, 1, C.woodDk);
+  R(x, y, 1, 20, C.redHi);
+  R(x+w-1, y, 1, 20, C.woodDk);
+  txt(text, W/2, y+10, 7, C.parchment, 'center');
+
+  // timer
+  const ratio = r.remaining / (60*30);
+  R(x+2, y+15, w-4, 3, C.boot);
+  R(x+2, y+15, ((w-4)*ratio)|0, 3, C.badge);
+}
+
+function drawAchv(){
+  if (state.achvQ.length === 0) return;
+  const a = state.achvQ[0];
+  const text = a.text;
+  const ttotal = 200;
+  const elapsed = state.t - a.born;
+  // slide in 0-20, hold, slide out 180-200
+  let yOff = 0;
+  if (elapsed < 18) yOff = -26 + (elapsed/18)*26;
+  else if (elapsed > ttotal - 22) yOff = -((elapsed - (ttotal-22))/22) * 26;
+
+  const w = text.length * 7 + 24;
+  const x = (W - w) / 2;
+  const y = 54 + yOff;
+
+  // outer gold
+  R(x-2, y-2, w+4, 22, C.badge);
+  R(x-1, y-1, w+2, 1, '#fff2c8');
+  R(x-1, y+18, w+2, 1, C.yelSh);
+  // inner wood
+  R(x, y, w, 18, C.wood);
+  R(x, y, w, 1, C.woodHi);
+  R(x, y+17, w, 1, C.woodDk);
+  // sparkles
+  if ((state.t >> 3) & 1){
+    P(x+2, y+2, C.parchment);
+    P(x+w-3, y+15, C.parchment);
+  } else {
+    P(x+5, y+15, C.parchment);
+    P(x+w-6, y+2, C.parchment);
+  }
+  // text
+  txt(text, W/2, y+12, 7, C.badge, 'center');
+}
+
+// ============================================================
+//  MAIN LOOP
+// ============================================================
+
+function frame(){
+  update();
+  // depth-sort: things behind player vs in front (by feet y)
+  clear();
+  drawWall();
+  drawConveyor();
+  drawFloor();
+  drawFoupShelf();
+  drawLitho();
+  drawEtcher();
+  drawCrate();
+
+  // player and NPC sorted by foot Y (lower = in front)
+  const pfy = state.py;
+  const nfy = 196; // npc foot y
+  if (pfy < nfy){
+    drawPlayer();
+    drawNpc();
+  } else {
+    drawNpc();
+    drawPlayer();
+  }
+
+  drawSpeech();
+  drawHud();
+  drawQuest();
+  drawRush();
+  drawCombo();
+  drawPrompt();
+  drawMsg();
+  drawMiniGame();
+  drawAchv();
+
+  // vignette
+  ctx.fillStyle = 'rgba(0,0,0,0.1)';
+  ctx.fillRect(0,0,W,4);
+  ctx.fillRect(0,H-4,W,4);
+
+  requestAnimationFrame(frame);
+}
+
+// Welcome
+newQuest();
+setTimeout(() => {
+  speak('npc', '오늘도 좋은 수율을!', 220);
+}, 600);
+setTimeout(() => {
+  showMsg('Tip: 캘리브레이션 정중앙(녹색) = PERFECT × 4배 보상', 240);
+}, 2200);
+
+frame();
+</script>
+
+</body>
+</html>
