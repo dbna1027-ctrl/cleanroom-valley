@@ -84,7 +84,7 @@
   <div class="toast" id="toast"><div class="panel" id="toast-panel"></div></div>
 </div>
 <div class="hint">
-  <b>이동</b> 방향키 / WASD &nbsp; · &nbsp; <b>상호작용</b> Space / E &nbsp; · &nbsp; <b>휴식 (Power 회복)</b> R &nbsp; · &nbsp; <b>목표</b> Si 100개 출하
+  <b>이동</b> 방향키/WASD &nbsp;·&nbsp; <b>상호작용</b> Space/E &nbsp;·&nbsp; <b>휴식</b> R &nbsp;·&nbsp; <b>버리기</b> Q &nbsp;·&nbsp; <b>상점</b> B &nbsp;·&nbsp; <b>인벤토리</b> 1~8 &nbsp;·&nbsp; <b>목표</b> Si 100개
 </div>
 
 <script>
@@ -166,7 +166,7 @@ function txt(s, x, y, size, col, anchor){
 //   Inventory bar         y = 238 .. 270
 //
 // Play bounds for player FEET:
-const FLOOR_TOP = 200;   // can't walk into back wall area higher than this
+const FLOOR_TOP = 92;    // can walk up close to the back wall (behind equipment)
 const FLOOR_BOT = 232;
 const FLOOR_LEFT = 8;
 const FLOOR_RIGHT = 472;
@@ -174,6 +174,7 @@ const FLOOR_RIGHT = 472;
 // Stations (interaction triggers). Player can interact when within range.
 const STATIONS = [
   { id:'foup',   x:32,  y:96,  w:78, h:114, prompt:'웨이퍼 꺼내기',  doorX:71,  doorY:218 },
+  { id:'shop',   x:130, y:198, w:24, h:32,  prompt:'FAB-MART 열기', doorX:142, doorY:236 },
   { id:'litho',  x:174, y:104, w:116,h:98,  prompt:'노광 시작',     doorX:232, doorY:212 },
   { id:'etcher', x:352, y:116, w:92, h:78,  prompt:'식각 시작',     doorX:398, doorY:202 },
   { id:'crate',  x:432, y:200, w:32, h:24,  prompt:'출하',         doorX:448, doorY:228 },
@@ -197,6 +198,7 @@ const state = {
   // resources
   silicon: 0,
   power: 100,
+  maxPower: 100,
   temp: 22.1,
   day: 1,
   // machines
@@ -218,21 +220,57 @@ const state = {
   // quest
   quest: null,            // { type, target, progress, reward, label }
   questDone: 0,
-  perfectQuestCount: 0,   // counter for active perfect quest
+  perfectQuestCount: 0,
   // achievements
   achv: {},               // id -> true
   achvQ: [],              // queue of { text, until, sub }
   // rush order
-  rush: null,             // { remaining, shipped, target, mult }
-  nextRushAt: 60 * 35,    // first rush ~35s in
+  rush: null,
+  nextRushAt: 60 * 35,
+  // inventory (consumables)
+  inventory: {
+    photoresist: 5,
+    etchant: 5,
+    coffee: 1,            // start with one free coffee
+    wrench: 0,
+    mask: 0,
+  },
+  // permanent upgrades (purchased from shop)
+  upgrades: {
+    lithoBoost: 0,        // 0..3, each level: machine -30 frames
+    etchBoost: 0,
+    battery: 0,           // 0..3, each level: +20% maxPower
+    perfect: 0,           // 0..2, each level: +2.5% perfect-zone half-width
+  },
+  // one-shot boosts armed via inventory items
+  boostNext: { perfect: false },
+  // shop modal
+  shopOpen: false,
+  shopCursor: 0,
+  shopFlash: 0,           // flash frames after purchase
+  // inventory click feedback
+  invFlash: { slot: -1, until: 0 },
   // ui
-  msg: null,            // { text, until }
-  speech: null,         // { who:'npc'|'self', text, until }
-  prompt: null,         // station id you can interact with now
+  msg: null,
+  speech: null,
+  prompt: null,
   // global tick
   t: 0,
   won: false,
 };
+
+// Shop items in order — separator placed between consumables and upgrades.
+const SHOP_ITEMS = [
+  { id:'pr',         name:'Photoresist +5', price:20, kind:'consume', icon:'photoresist' },
+  { id:'et',         name:'Etchant +5',     price:20, kind:'consume', icon:'etchant' },
+  { id:'coffee',     name:'Coffee',         price:18, kind:'consume', icon:'coffee' },
+  { id:'wrench',     name:'Wrench',         price:35, kind:'consume', icon:'wrench' },
+  { id:'mask',       name:'Mask (Auto-PERFECT)', price:55, kind:'consume', icon:'mask' },
+  { id:'lithoBoost', name:'Litho Speed+',   kind:'upgrade', max:3, prices:[30,60,120], icon:'upLitho' },
+  { id:'etchBoost',  name:'Etch Speed+',    kind:'upgrade', max:3, prices:[30,60,120], icon:'upEtch' },
+  { id:'battery',    name:'Battery+',       kind:'upgrade', max:3, prices:[40,80,160], icon:'upBattery' },
+  { id:'perfect',    name:'PERFECT Zone+',  kind:'upgrade', max:2, prices:[60,150],    icon:'upPerfect' },
+];
 
 // ============================================================
 //  INPUT
@@ -243,11 +281,28 @@ window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   keys[k] = true;
   if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
-  if (k === ' ' || k === 'e') {
-    if (state.miniGame && !state.miniGame.result) resolveMiniGame();
-    else tryInteract();
+
+  // Shop modal swallows most input
+  if (state.shopOpen){
+    if (k === 'b' || k === 'escape') closeShop();
+    else if (k === 'arrowup' || k === 'w') shopMove(-1);
+    else if (k === 'arrowdown' || k === 's') shopMove(1);
+    else if (k === 'enter' || k === ' ') shopBuy();
+    return;
   }
+
+  // Minigame swallows Space/E
+  if (state.miniGame && !state.miniGame.result){
+    if (k === ' ' || k === 'e') resolveMiniGame();
+    return;
+  }
+
+  // Normal world input
+  if (k === ' ' || k === 'e') tryInteract();
   if (k === 'r') rest();
+  if (k === 'b') openShop();
+  if (k === 'q') discardCarry();
+  if (k >= '1' && k <= '8') clickInventory(parseInt(k, 10));
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 
@@ -288,19 +343,23 @@ function nearestStation(){
 function tryInteract(){
   if (state.won) return;
   if (state.miniGame) return;
+  if (state.shopOpen) return;
   const s = nearestStation();
   if (!s) return;
 
   if (s.id === 'foup'){
-    if (state.carry){ showMsg('이미 들고 있음'); return; }
+    if (state.carry){ showMsg('이미 들고 있음 — Q로 버리기'); return; }
     state.carry = 'raw';
     state.carryQ = 0;
     speak('self', 'Raw wafer 획득!', 90);
   }
+  else if (s.id === 'shop'){
+    openShop();
+  }
   else if (s.id === 'litho'){
     if (state.lithoBusy > 0){ showMsg('가동 중...'); return; }
     if (state.lithoOut){
-      if (state.carry){ showMsg('손 비워야 함'); return; }
+      if (state.carry){ showMsg('손 비워야 함 — Q로 버리기'); return; }
       state.carry = 'exposed';
       state.carryQ = state.lithoOutQ;
       state.lithoOut = false;
@@ -310,12 +369,13 @@ function tryInteract(){
     }
     if (state.carry !== 'raw'){ showMsg('Raw wafer 필요'); return; }
     if (state.power < 8){ showMsg('Power 부족! R로 휴식'); return; }
+    if (state.inventory.photoresist <= 0){ showMsg('Photoresist 부족! Shop에서 구매'); return; }
     startMiniGame('litho');
   }
   else if (s.id === 'etcher'){
     if (state.etchBusy > 0){ showMsg('가동 중...'); return; }
     if (state.etchOut){
-      if (state.carry){ showMsg('손 비워야 함'); return; }
+      if (state.carry){ showMsg('손 비워야 함 — Q로 버리기'); return; }
       state.carry = 'etched';
       state.carryQ = state.etchOutQ;
       state.etchOut = false;
@@ -325,6 +385,7 @@ function tryInteract(){
     }
     if (state.carry !== 'exposed'){ showMsg('Exposed wafer 필요'); return; }
     if (state.power < 10){ showMsg('Power 부족! R로 휴식'); return; }
+    if (state.inventory.etchant <= 0){ showMsg('Etchant 부족! Shop에서 구매'); return; }
     startMiniGame('etcher');
   }
   else if (s.id === 'crate'){
@@ -335,7 +396,6 @@ function tryInteract(){
     state.carry = null;
     state.carryQ = 0;
     speak('self', '+' + reward + ' Si !!', 110);
-    // small temp drift each ship
     state.temp += (Math.random()-0.5) * 0.6;
     state.temp = Math.max(20, Math.min(25, state.temp));
     if (state.silicon >= 100 && !state.won){
@@ -357,23 +417,47 @@ function tryInteract(){
       const tips = [
         '오늘 수율 좋네요!',
         '캘리브레이션은 정중앙!',
-        '콤보 끊기지 않게!',
+        'B 키로 FAB-MART!',
       ];
       speak('npc', tips[Math.floor(state.t/120)%tips.length], 140);
     }
   }
 }
 
+function discardCarry(){
+  if (state.miniGame || state.shopOpen || state.won) return;
+  if (!state.carry){ showMsg('버릴 게 없음'); return; }
+  const c = state.carry;
+  const q = state.carryQ;
+  state.carry = null;
+  state.carryQ = 0;
+  if (c === 'raw'){
+    speak('self', 'Raw wafer 버림', 80);
+  } else if (c === 'exposed'){
+    const qName = ['Normal','Good','PERFECT'][q];
+    speak('self', 'Exposed(' + qName + ') 버림 😢', 110);
+    state.scrapTotal++;
+  } else if (c === 'etched'){
+    const qName = ['Normal','Good','PERFECT'][q];
+    speak('self', 'Etched(' + qName + ') 버림 😭', 130);
+    state.scrapTotal++;
+  }
+}
+
 function rest(){
-  if (state.power >= 100 && !state.won){
-    showMsg('이미 100% Power');
+  if (state.power >= state.maxPower && !state.won &&
+      state.inventory.photoresist >= 5 && state.inventory.etchant >= 5){
+    showMsg('이미 최대 상태');
     return;
   }
-  state.power = 100;
+  state.power = state.maxPower;
   state.day += 1;
   state.temp = 22.0 + Math.random() * 0.4;
+  // refill basic consumables up to 5
+  if (state.inventory.photoresist < 5) state.inventory.photoresist = 5;
+  if (state.inventory.etchant < 5) state.inventory.etchant = 5;
   if (state.won){
-    // reset for fun if won
+    // reset stats but KEEP upgrades & inventory (player earned them)
     state.won = false;
     state.silicon = 0;
     state.shipTotal = 0;
@@ -385,12 +469,113 @@ function rest(){
   }
   if (state.day === 3) unlock('DAY_3', '☀️ Day 3 도달!', 15);
   if (state.day === 7) unlock('DAY_7', '☀️ Day 7 도달!', 30);
-  speak('self', 'Day ' + state.day + ' 시작!', 100);
+  speak('self', 'Day ' + state.day + ' — 보급 완료!', 100);
 }
 
 // ============================================================
-//  MINIGAME — timing calibration
+//  SHOP & INVENTORY  — opening, buying, using consumables
 // ============================================================
+
+function openShop(){
+  if (state.miniGame) return;
+  state.shopOpen = true;
+  state.shopCursor = 0;
+}
+function closeShop(){
+  state.shopOpen = false;
+  state.shopFlash = 0;
+}
+function shopMove(dir){
+  let n = state.shopCursor + dir;
+  if (n < 0) n = SHOP_ITEMS.length - 1;
+  if (n >= SHOP_ITEMS.length) n = 0;
+  state.shopCursor = n;
+}
+function shopBuy(){
+  const item = SHOP_ITEMS[state.shopCursor];
+  if (item.kind === 'consume'){
+    if (state.silicon < item.price){ speak('self','Si 부족!', 70); return; }
+    state.silicon -= item.price;
+    if (item.id === 'pr')      state.inventory.photoresist += 5;
+    else if (item.id === 'et') state.inventory.etchant += 5;
+    else if (item.id === 'coffee') state.inventory.coffee += 1;
+    else if (item.id === 'wrench') state.inventory.wrench += 1;
+    else if (item.id === 'mask')   state.inventory.mask += 1;
+    state.shopFlash = 24;
+    speak('self', '구매 ✓', 60);
+    unlock('FIRST_BUY', '🛒 첫 구매!', 0);
+  } else {
+    const lv = state.upgrades[item.id];
+    if (lv >= item.max){ speak('self','MAX 도달!', 70); return; }
+    const price = item.prices[lv];
+    if (state.silicon < price){ speak('self','Si 부족!', 70); return; }
+    state.silicon -= price;
+    state.upgrades[item.id]++;
+    applyUpgrade(item.id);
+    state.shopFlash = 36;
+    speak('self', item.name + ' Lv.' + (lv+1) + ' !', 120);
+    unlock('FIRST_UPGRADE', '⚡ 첫 업그레이드!', 0);
+    if (state.upgrades.battery === 3) unlock('MAX_BATTERY', '🔋 Battery MAX!', 50);
+    if (state.upgrades.lithoBoost === 3 && state.upgrades.etchBoost === 3)
+      unlock('MAX_SPEED', '⚡ 풀스피드!', 80);
+  }
+}
+function applyUpgrade(id){
+  if (id === 'battery'){
+    state.maxPower = 100 + 20 * state.upgrades.battery;
+    state.power = state.maxPower;
+  }
+}
+
+function useInventoryItem(slot){
+  if (state.miniGame || state.shopOpen || state.won) return;
+  if (slot === 4){
+    if (state.inventory.coffee <= 0){ showMsg('☕ Coffee 없음 — Shop에서 구매'); return; }
+    state.inventory.coffee--;
+    state.power = Math.min(state.maxPower, state.power + 40);
+    speak('self', '☕ +40 Power', 80);
+  } else if (slot === 5){
+    if (state.inventory.wrench <= 0){ showMsg('🔧 Wrench 없음 — Shop에서 구매'); return; }
+    if (state.lithoBusy === 0 && state.etchBusy === 0){
+      showMsg('가동 중인 장비 없음'); return;
+    }
+    state.inventory.wrench--;
+    if (state.lithoBusy > 0) state.lithoBusy = 1;
+    if (state.etchBusy > 0) state.etchBusy = 1;
+    speak('self', '🔧 즉시 완료!', 80);
+  } else if (slot === 6){
+    if (state.inventory.mask <= 0){ showMsg('🎭 Mask 없음 — Shop에서 구매'); return; }
+    if (state.boostNext.perfect){ showMsg('이미 활성 중'); return; }
+    state.inventory.mask--;
+    state.boostNext.perfect = true;
+    speak('self', '🎭 다음 캘리브 PERFECT 보장!', 110);
+  }
+}
+
+// All slot clicks (number keys 1-8) — slots 1-3 show info, 4-6 use items, 7-8 are empty
+function clickInventory(slot){
+  if (state.shopOpen || state.won) return;
+  if (state.miniGame && !state.miniGame.result) return;
+  // visual flash always fires (gives clear keypress feedback)
+  state.invFlash = { slot: slot - 1, until: state.t + 14 };
+
+  if (slot === 1){
+    if (!state.carry){ showMsg('웨이퍼 없음 — FOUP에서 꺼내기'); return; }
+    const qName = ['Normal','Good','PERFECT'][state.carryQ];
+    const cName = state.carry === 'raw' ? 'Raw'
+                : state.carry === 'exposed' ? 'Exposed'
+                : 'Etched';
+    showMsg('현재: ' + cName + ' wafer  [Q: ' + qName + ']');
+  } else if (slot === 2){
+    showMsg('Photoresist × ' + state.inventory.photoresist + '  — Litho 자동 소모');
+  } else if (slot === 3){
+    showMsg('Etchant × ' + state.inventory.etchant + '  — Etch 자동 소모');
+  } else if (slot === 4 || slot === 5 || slot === 6){
+    useInventoryItem(slot);
+  } else if (slot === 7 || slot === 8){
+    showMsg('빈 슬롯 — 차후 해금 예정');
+  }
+}
 
 function startMiniGame(type){
   state.miniGame = { type, pos: 0, dir: 1, speed: 0.016, result: null, lockedAt: 0 };
@@ -399,11 +584,20 @@ function startMiniGame(type){
 function resolveMiniGame(){
   const m = state.miniGame;
   if (!m || m.result) return;
-  const p = m.pos;
+
+  // Mask boost: force perfect result regardless of timing
   let result;
-  if (p > 0.45 && p < 0.55) result = 'perfect';
-  else if (p > 0.28 && p < 0.72) result = 'good';
-  else result = 'bad';
+  if (state.boostNext.perfect){
+    result = 'perfect';
+    state.boostNext.perfect = false;
+  } else {
+    const p = m.pos;
+    // Wider PERFECT zone if upgraded (+2.5% half-width per level, levels 0..2)
+    const pad = 0.025 * state.upgrades.perfect;
+    if (p > 0.45 - pad && p < 0.55 + pad) result = 'perfect';
+    else if (p > 0.28 && p < 0.72) result = 'good';
+    else result = 'bad';
+  }
   m.result = result;
   m.lockedAt = state.t;
 
@@ -415,20 +609,23 @@ function resolveMiniGame(){
     state.scrapTotal++;
     state.power = Math.max(0, state.power - 4);
     speak('self', 'SCRAP! 캘리브레이션 실패', 110);
-    // break combo on scrap
     state.combo = 0;
     state.comboTimer = 0;
   } else {
-    // perfect → +1 quality, good → keep current
+    // consume the fuel and run the machine
     const inQ = state.carryQ;
     const outQ = result === 'perfect' ? Math.min(2, inQ + 1) : inQ;
     state.carry = null;
     if (isLitho){
-      state.lithoBusy = 180;
+      state.inventory.photoresist = Math.max(0, state.inventory.photoresist - 1);
+      const baseBusy = 180 - 30 * state.upgrades.lithoBoost;
+      state.lithoBusy = Math.max(30, baseBusy);
       state.lithoOutQ = outQ;
       state.power = Math.max(0, state.power - 8);
     } else {
-      state.etchBusy = 180;
+      state.inventory.etchant = Math.max(0, state.inventory.etchant - 1);
+      const baseBusy = 180 - 30 * state.upgrades.etchBoost;
+      state.etchBusy = Math.max(30, baseBusy);
       state.etchOutQ = outQ;
       state.power = Math.max(0, state.power - 10);
     }
@@ -603,15 +800,17 @@ function tickRush(){
 function update(){
   state.t++;
 
-  // tick auxiliary systems
+  // tick auxiliary systems (combo/rush pause during shop, minigame still resolves)
   tickMiniGame();
-  tickCombo();
-  tickRush();
+  if (!state.shopOpen){
+    tickCombo();
+    tickRush();
+  }
   tickAchv();
 
-  // player movement (locked during minigame)
+  // player movement (locked during minigame or shop)
   let vx=0, vy=0;
-  if (!state.miniGame){
+  if (!state.miniGame && !state.shopOpen){
     if (isDown('arrowup','w'))    { vy = -1; state.pdir='up'; }
     if (isDown('arrowdown','s'))  { vy =  1; state.pdir='down'; }
     if (isDown('arrowleft','a'))  { vx = -1; state.pdir='left'; }
@@ -1370,12 +1569,20 @@ function drawHud(){
   R(123,7,2,2,C.badge); R(121,9,4,1,C.badge);
   R(122,10,3,1,'#fce078'); R(121,11,4,1,C.badge);
   R(122,12,2,3,C.badge); P(123,10,C.parchment);
-  txt('PWR ' + (state.power|0) + '%', 130, 14, 6, C.parchment);
+  const pctPwr = Math.round((state.power / state.maxPower) * 100);
+  txt('PWR ' + pctPwr + '%', 130, 14, 6, C.parchment);
   // mini bar
   R(178,9,32,5,C.woodDk);
-  const pfill = Math.max(0, Math.min(28, (state.power/100)*28));
-  const pcol = state.power < 25 ? C.red : (state.power < 50 ? C.badge : C.grnHi);
-  R(179,10, pfill|0, 3, pcol);
+  const pratio = Math.max(0, Math.min(1, state.power / state.maxPower));
+  const pfill = (pratio * 28) | 0;
+  const pcol = pctPwr < 25 ? C.red : (pctPwr < 50 ? C.badge : C.grnHi);
+  R(179,10, pfill, 3, pcol);
+  // battery upgrade tick marks
+  if (state.upgrades.battery > 0){
+    for (let i=0; i<state.upgrades.battery; i++){
+      R(208 - i*2, 7, 1, 2, C.grnXHi);
+    }
+  }
 
   // Stat 3: Temp
   R(224,5,116,13,'#4a2c18');
@@ -1438,16 +1645,19 @@ function drawHud(){
   R(398,238,2,30,C.woodDk);
   R(82,240,316,1,C.woodMidHi);
 
-  // 8 slots
+  // Build slot definitions from real state
+  const carryIcon = state.carry === 'raw' ? 'raw' :
+                    state.carry === 'exposed' ? 'exposed' :
+                    state.carry === 'etched' ? 'etched' : null;
   const slots = [
-    { item: state.carry === 'raw' ? 'raw' : (state.carry === 'exposed' ? 'exposed' : (state.carry === 'etched' ? 'etched' : null)) , count: state.carry ? 1 : 0, label:'wafer' },
-    { item: 'photoresist', count: 999, label:'PR' },
-    { item: 'etchant', count: 999, label:'ET' },
-    { item: 'mask', count: 1, label:'mask' },
-    { item: null, count: 0 },
-    { item: null, count: 0 },
-    { item: 'wrench', count: 1 },
-    { item: 'coffee', count: 1 },
+    { item: carryIcon, count: state.carry ? 1 : 0, hk: null },
+    { item: 'photoresist', count: state.inventory.photoresist, hk: null },
+    { item: 'etchant',     count: state.inventory.etchant,     hk: null },
+    { item: 'coffee',      count: state.inventory.coffee,      hk: '4' },
+    { item: 'wrench',      count: state.inventory.wrench,      hk: '5' },
+    { item: 'mask',        count: state.inventory.mask,        hk: '6' },
+    { item: null,          count: 0 },
+    { item: null,          count: 0 },
   ];
   for (let i=0;i<8;i++){
     const sx = 86 + i*39;
@@ -1459,7 +1669,38 @@ function drawHud(){
     R(sx,sy,36,20,'#5a3c20');
     R(sx+1,sy+1,34,18,C.woodMidHi);
     R(sx+1,sy+1,34,1,'#a87a48');
+    // Dim slot if empty (low count)
+    if (slots[i].item && slots[i].count === 0){
+      ctx.globalAlpha = 0.35;
+    }
     drawInvIcon(sx, sy, slots[i]);
+    ctx.globalAlpha = 1;
+    // Hotkey label top-left
+    if (slots[i].hk){
+      R(sx+1, sy+1, 7, 7, slots[i].count > 0 ? C.badge : C.woodDk);
+      txt(slots[i].hk, sx+4, sy+7, 5, C.wood, 'center');
+    }
+    // Click flash (pressed-this-slot feedback)
+    if (state.invFlash.slot === i && state.t < state.invFlash.until){
+      const fadeStart = state.invFlash.until - state.t;
+      const a = Math.min(1, fadeStart / 14);
+      ctx.fillStyle = 'rgba(252, 224, 120, ' + (0.7 * a) + ')';
+      ctx.fillRect(sx-1, sy-1, 38, 22);
+      // crisp gold border
+      ctx.strokeStyle = '#fff2c8';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(sx-1.5, sy-1.5, 39, 23);
+    }
+  }
+  // Boost indicator if mask is armed
+  if (state.boostNext.perfect){
+    const sx = 86 + 5*39;
+    R(sx-2, 241, 40, 24, 'rgba(116,196,144,0)');
+    ctx.strokeStyle = C.grnHi;
+    ctx.lineWidth = 1;
+    if ((state.t>>3)&1){
+      ctx.strokeRect(sx-2.5, 240.5, 41, 25);
+    }
   }
 }
 
@@ -1546,6 +1787,57 @@ function drawInvIcon(sx, sy, slot){
         P(cx-2, cy-6, C.suitSh);
         P(cx+1, cy-7, C.suitSh);
       }
+      break;
+    }
+    case 'upLitho': {
+      // Mini litho body with arrow up
+      R(cx-5,cy-4,10,8,C.yel);
+      R(cx-5,cy-4,10,1,C.yelHi);
+      R(cx-5,cy+3,10,1,C.yelSh);
+      R(cx-3,cy-2,6,4,C.screen);
+      // up arrow
+      R(cx-1,cy-7,2,2,C.grnHi);
+      R(cx-2,cy-6,4,1,C.grnHi);
+      R(cx-3,cy-5,6,1,C.grnHi);
+      break;
+    }
+    case 'upEtch': {
+      R(cx-5,cy-4,10,8,C.pur);
+      R(cx-5,cy-4,10,1,C.purHi);
+      R(cx-5,cy+3,10,1,C.purSh);
+      R(cx-3,cy-2,6,4,C.plasma);
+      P(cx-2,cy-1,C.plasmaHi);
+      // up arrow
+      R(cx-1,cy-7,2,2,C.grnHi);
+      R(cx-2,cy-6,4,1,C.grnHi);
+      R(cx-3,cy-5,6,1,C.grnHi);
+      break;
+    }
+    case 'upBattery': {
+      // battery body
+      R(cx-4,cy-4,8,9,C.boot);
+      R(cx-3,cy-3,6,7,C.grnHi);
+      R(cx-3,cy-3,6,1,C.grnXHi);
+      R(cx-3,cy+3,6,1,C.grn);
+      // cap
+      R(cx-2,cy-6,4,2,C.boot);
+      // bolt
+      R(cx,cy-1,1,1,C.parchment);
+      R(cx-1,cy,2,1,C.parchment);
+      P(cx,cy+1,C.parchment);
+      break;
+    }
+    case 'upPerfect': {
+      // star/sparkle
+      R(cx-1,cy-5,2,2,C.badge);
+      R(cx-3,cy-3,6,2,C.badge);
+      R(cx-5,cy-1,10,2,C.badge);
+      R(cx-3,cy+1,6,2,C.badge);
+      R(cx-1,cy+3,2,2,C.badge);
+      R(cx-1,cy-3,2,2,'#fff2c8');
+      P(cx,cy-2,'#fff2c8');
+      P(cx-2,cy,'#fff2c8');
+      P(cx+2,cy,'#fff2c8');
       break;
     }
   }
@@ -1733,32 +2025,210 @@ function drawAchv(){
 }
 
 // ============================================================
+//  SHOP KIOSK SPRITE + SHOP MODAL UI
+// ============================================================
+
+function drawKiosk(){
+  ctx.save();
+  ctx.translate(130, 198);
+  // legs
+  R(2,28,4,4,C.boot);
+  R(18,28,4,4,C.boot);
+  // base shadow
+  R(0,30,24,2,C.crateSh);
+  // body
+  R(0,4,24,26,C.crate);
+  R(0,4,24,1,C.crateHi);
+  R(0,29,24,1,C.crateSh);
+  R(0,4,1,26,C.crateHi);
+  R(23,4,1,26,C.crateSh);
+  R(2,6,20,2,C.crateHi);
+  // screen
+  R(3,10,18,11,C.boot);
+  R(3,10,18,1,C.black);
+  R(4,11,16,9,C.screen);
+  R(4,11,16,1,C.panelDk);
+  // glowing text
+  txt('FAB', 12, 15, 5, C.laser, 'center');
+  txt('MART', 12, 20, 5, C.laser, 'center');
+  // animated scanline
+  const sy = 11 + ((state.t >> 1) % 9);
+  ctx.fillStyle = 'rgba(168, 232, 255, 0.3)';
+  ctx.fillRect(4, sy, 16, 1);
+  // slot
+  R(5,22,14,2,C.boot);
+  R(6,23,12,1,'#1a1024');
+  // bottom label
+  txt('SHOP', 12, 28, 5, C.parchment, 'center');
+  // top antenna with blinking light
+  R(10,0,4,4,C.crateSh);
+  R(11,-2,2,2,C.crateSh);
+  const blink = ((state.t>>4) & 1);
+  R(11,-3,2,1, blink ? C.grnHi : C.grn);
+  if (blink){
+    // glow ring
+    ctx.fillStyle = 'rgba(168, 240, 192, 0.25)';
+    ctx.fillRect(8, -5, 8, 4);
+  }
+  ctx.restore();
+}
+
+function drawShop(){
+  if (!state.shopOpen) return;
+
+  // backdrop
+  ctx.fillStyle = 'rgba(20,16,26,0.75)';
+  ctx.fillRect(0, 0, W, H);
+
+  // modal frame
+  const mx = 56, my = 16, mw = 368, mh = 238;
+  R(mx-3, my-3, mw+6, mh+6, C.badge);
+  R(mx, my, mw, mh, C.wood);
+  R(mx, my, mw, 2, C.woodHi);
+  R(mx, my+mh-2, mw, 2, C.woodDk);
+  R(mx, my, 2, mh, C.woodHi);
+  R(mx+mw-2, my, 2, mh, C.woodDk);
+  // inner panel
+  R(mx+4, my+4, mw-8, mh-8, C.woodMid);
+  R(mx+4, my+4, mw-8, 1, C.woodMidHi);
+
+  // title bar
+  R(mx+8, my+8, mw-16, 22, '#3a2818');
+  R(mx+8, my+8, mw-16, 1, C.woodHi);
+  R(mx+8, my+28, mw-16, 1, C.woodDk);
+  // gold corner pins
+  for (const cx of [mx+12, mx+mw-18]){
+    R(cx, my+12, 4, 4, C.badge);
+    P(cx+1, my+13, '#fff2c8');
+  }
+  txt('🛒  FAB-MART', mx + mw/2, my+22, 8, C.parchment, 'center');
+
+  // Si counter (top-right of modal)
+  const siText = 'Si ' + state.silicon;
+  const siw = siText.length * 6 + 16;
+  R(mx+mw-siw-12, my+36, siw, 14, C.woodDk);
+  R(mx+mw-siw-12, my+36, siw, 1, C.bootHi);
+  // silicon icon
+  R(mx+mw-siw-6, my+39, 4, 1, C.si);
+  R(mx+mw-siw-7, my+40, 6, 1, C.siMid);
+  R(mx+mw-siw-8, my+41, 8, 3, C.siHi);
+  R(mx+mw-siw-7, my+44, 6, 2, C.siMid);
+  txt(state.silicon, mx+mw-16, my+47, 7, C.badge, 'end');
+
+  // section labels + items
+  const rowY0 = my + 54;
+  const rowH = 16;
+
+  // separator before upgrades (between idx 4 and 5)
+  for (let i=0; i<SHOP_ITEMS.length; i++){
+    const item = SHOP_ITEMS[i];
+    const ry = rowY0 + i*rowH;
+    const sel = i === state.shopCursor;
+
+    // section header before first upgrade
+    if (i === 5){
+      // (no-op visual since we draw a divider after row 4)
+    }
+
+    // row background
+    if (sel){
+      R(mx+10, ry-1, mw-20, rowH-1, '#4a2c18');
+      R(mx+10, ry-1, mw-20, 1, C.woodHi);
+      R(mx+10, ry+rowH-3, mw-20, 1, C.woodDk);
+      // cursor chevron
+      txt('▶', mx+16, ry+11, 8, C.badge);
+      // purchase flash
+      if (state.shopFlash > 0){
+        ctx.fillStyle = state.shopFlash > 16 ? 'rgba(168,240,192,0.55)' : 'rgba(168,240,192,0.2)';
+        ctx.fillRect(mx+10, ry-1, mw-20, rowH-1);
+        state.shopFlash--;
+      }
+    }
+
+    // icon (reuse drawInvIcon by faking the slot position)
+    // drawInvIcon draws icon centered at sx+18, sy+10
+    const icx = mx + 32;
+    drawInvIcon(icx - 18, ry - 4, { item: item.icon, count: 0 });
+
+    // name
+    let label = item.name;
+    if (item.kind === 'upgrade'){
+      const lv = state.upgrades[item.id];
+      label += ' Lv.' + lv + '/' + item.max;
+    }
+    txt(label, mx + 56, ry + 11, 7, C.parchment);
+
+    // count (for consumables) — show what you have
+    if (item.kind === 'consume'){
+      const have = (item.id === 'pr') ? state.inventory.photoresist :
+                   (item.id === 'et') ? state.inventory.etchant :
+                   (item.id === 'coffee') ? state.inventory.coffee :
+                   (item.id === 'wrench') ? state.inventory.wrench :
+                   state.inventory.mask;
+      txt('보유 ' + have, mx + mw - 100, ry + 11, 6, C.parchMid, 'end');
+    }
+
+    // price / state
+    let priceText, priceCol;
+    if (item.kind === 'consume'){
+      priceText = item.price + ' Si';
+      priceCol = state.silicon >= item.price ? C.grnHi : C.red;
+    } else {
+      const lv = state.upgrades[item.id];
+      if (lv >= item.max){
+        priceText = 'MAX';
+        priceCol = C.parchMid;
+      } else {
+        const p = item.prices[lv];
+        priceText = p + ' Si';
+        priceCol = state.silicon >= p ? C.grnHi : C.red;
+      }
+    }
+    txt(priceText, mx + mw - 18, ry + 11, 7, priceCol, 'end');
+  }
+
+  // divider between consumables (0-4) and upgrades (5-8)
+  const divY = rowY0 + 5*rowH - 2;
+  R(mx + 12, divY, mw - 24, 1, C.woodDk);
+  R(mx + 12, divY+1, mw - 24, 1, C.woodHi);
+
+  // footer
+  const footY = my + mh - 22;
+  R(mx + 8, footY, mw - 16, 14, C.woodDk);
+  R(mx + 8, footY, mw - 16, 1, '#2a1810');
+  txt('↑↓ 선택   Enter 구매   B / Esc 닫기', mx + mw/2, footY + 10, 6, C.parchMid, 'center');
+}
+
+// ============================================================
 //  MAIN LOOP
 // ============================================================
 
 function frame(){
   update();
-  // depth-sort: things behind player vs in front (by feet y)
   clear();
   drawWall();
-  drawConveyor();
   drawFloor();
-  drawFoupShelf();
-  drawLitho();
-  drawEtcher();
-  drawCrate();
 
-  // player and NPC sorted by foot Y (lower = in front)
-  const pfy = state.py;
-  const nfy = 196; // npc foot y
-  if (pfy < nfy){
-    drawPlayer();
-    drawNpc();
-  } else {
-    drawNpc();
-    drawPlayer();
-  }
+  // Depth-sorted floor entities (machines + characters), sorted by base/foot Y.
+  // Smaller sortY = further from camera = drawn first (gets covered by later entities).
+  // Player gets +0.5 nudge so ties favor showing the player in front.
+  const ents = [
+    { sortY: 210, draw: drawFoupShelf },
+    { sortY: 230, draw: drawKiosk },
+    { sortY: 202, draw: drawLitho },
+    { sortY: 194, draw: drawEtcher },
+    { sortY: 224, draw: drawCrate },
+    { sortY: 213, draw: drawNpc },
+    { sortY: state.py + 0.5, draw: drawPlayer },
+  ];
+  ents.sort((a, b) => a.sortY - b.sortY);
+  for (const e of ents) e.draw();
 
+  // Overhead conveyor is drawn AFTER entities so its cart and rail
+  // pass in front of the player when they walk near the back wall.
+  drawConveyor();
+
+  // UI layer (always on top)
   drawSpeech();
   drawHud();
   drawQuest();
@@ -1767,6 +2237,7 @@ function frame(){
   drawPrompt();
   drawMsg();
   drawMiniGame();
+  drawShop();    // shop modal overlays everything else
   drawAchv();
 
   // vignette
