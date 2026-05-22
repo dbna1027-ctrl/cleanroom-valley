@@ -178,6 +178,7 @@ const STATIONS = [
   { id:'shop',   x:130, y:198, w:24, h:32,  prompt:'FAB-MART 열기', doorX:142, doorY:236 },
   { id:'litho',  x:174, y:104, w:116,h:98,  prompt:'노광 시작',     doorX:232, doorY:212 },
   { id:'etcher', x:352, y:116, w:92, h:78,  prompt:'식각 시작',     doorX:398, doorY:202 },
+  { id:'qa',     x:296, y:130, w:50, h:46,  prompt:'QA 검사',       doorX:321, doorY:182 },
   { id:'crate',  x:432, y:200, w:32, h:24,  prompt:'출하',         doorX:448, doorY:228 },
   { id:'npc',    x:312, y:188, w:14, h:26,  prompt:'대화',          doorX:319, doorY:222 },
 ];
@@ -196,6 +197,7 @@ const state = {
   // carrying
   carry: null,            // null | 'raw' | 'exposed' | 'etched'
   carryQ: 0,              // 0=normal, 1=good, 2=perfect
+  carryQA: null,          // null | 'A' | 'B' — QA inspection cert on the carried wafer
   // resources
   silicon: 0,
   lifetimeSi: 0,          // cumulative Si earned (drives fab level; never decreases)
@@ -214,6 +216,8 @@ const state = {
   etchOutQ: 0,
   // minigame
   miniGame: null,         // { type, pos:0..1, dir:±1, speed, result, lockedAt }
+  qaGame: null,           // QA defect-hunter minigame
+  qaMouse: { x:240, y:132 },
   // combo & stats
   combo: 0,
   comboTimer: 0,          // frames left in combo window
@@ -278,6 +282,13 @@ const state = {
   officeShopOpen: false,
   officeShopCursor: 0,
   officeShopFlash: 0,
+  // break room (휴게실) & R&D lab
+  bx: 240, by: 200,       // break-room player position
+  rx: 240, ry: 200,       // R&D lab player position
+  rfx: 80, rfy: 195,      // rooftop garden player position
+  research: { done:{}, active:null },   // active = { id, daysLeft }
+  rndMenuOpen: false,
+  rndCursor: 0,
   // global tick
   t: 0,
   won: false,
@@ -326,7 +337,7 @@ const SEC_PER_GAME_HOUR = 10;
 function tickClock(){
   // pause during menus / transitions / win screen
   const officeModalOpen = state.officeShopOpen || (state.officeWork && (state.officeWork.open || state.officeWork.result));
-  if (state.shopOpen || state.miniGame || officeModalOpen || state.fadeDir !== 0 || state.won) return;
+  if (state.shopOpen || state.miniGame || state.qaGame || state.rndMenuOpen || officeModalOpen || state.fadeDir !== 0 || state.won) return;
   state.hour += 1 / (60 * SEC_PER_GAME_HOUR);   // advance, assuming ~60fps
   if (state.hour >= 26){   // 02:00 next day
     autoCollapse();
@@ -441,9 +452,11 @@ const SEASON_THEME = [
 // ============================================================
 const OFFICE_TOP = 112, OFFICE_BOT = 226, OFFICE_LEFT = 28, OFFICE_RIGHT = 452;
 const OFFICE_STATIONS = [
-  { id:'desk',    x:186, y:120, w:108, h:48, prompt:'서류 처리',      doorX:240, doorY:180 },
-  { id:'shop',    x:138, y:140, w:28,  h:34, prompt:'가구 상점 (B)',  doorX:152, doorY:182 },
-  { id:'fabdoor', x:34,  y:118, w:34,  h:46, prompt:'탈의실로 나가기', doorX:51,  doorY:172 },
+  { id:'desk',     x:186, y:120, w:108, h:48, prompt:'서류 처리',      doorX:240, doorY:180 },
+  { id:'shop',     x:138, y:140, w:28,  h:34, prompt:'가구 상점 (B)',  doorX:152, doorY:182 },
+  { id:'fabdoor',  x:34,  y:118, w:34,  h:46, prompt:'탈의실로 나가기', doorX:51,  doorY:172 },
+  { id:'breakdoor',x:418, y:114, w:32,  h:48, prompt:'휴게실로',       doorX:432, doorY:168 },
+  { id:'rnddoor',  x:112, y:74,  w:34,  h:26, prompt:'R&D 연구소로',   doorX:129, doorY:116 },
 ];
 
 // gowning room (smock room) — hub between fab and office
@@ -452,6 +465,37 @@ const SMOCK_STATIONS = [
   { id:'changer',   x:198, y:118, w:84, h:48, prompt:'smock 착용/탈의', doorX:240, doorY:180 },
   { id:'officedoor',x:30,  y:118, w:34, h:46, prompt:'사무실로',       doorX:50,  doorY:172 },
   { id:'fabdoor',   x:416, y:118, w:34, h:46, prompt:'팹으로',         doorX:432, doorY:172 },
+];
+
+// break room (휴게실) — recover Power & buffs, casual clothes
+const BREAK_TOP = 112, BREAK_BOT = 226, BREAK_LEFT = 28, BREAK_RIGHT = 452;
+const BREAK_STATIONS = [
+  { id:'sofa',     x:300, y:150, w:96, h:34, prompt:'소파에서 휴식',   doorX:348, doorY:196 },
+  { id:'vending',  x:96,  y:120, w:30, h:50, prompt:'자판기',          doorX:114, doorY:180 },
+  { id:'roofdoor', x:28,  y:108, w:30, h:54, prompt:'옥상으로',        doorX:46,  doorY:168 },
+  { id:'officedoor',x:418,y:118, w:34, h:46, prompt:'사무실로',        doorX:432, doorY:172 },
+];
+
+// rooftop garden (옥상 정원) — full seasonal view + time-of-day sky, deep rest
+const ROOF_TOP = 162, ROOF_BOT = 226, ROOF_LEFT = 28, ROOF_RIGHT = 452;
+const ROOF_STATIONS = [
+  { id:'bench',    x:214, y:178, w:84, h:20, prompt:'사색 (깊은 휴식)', doorX:256, doorY:210 },
+  { id:'breakdoor',x:36,  y:150, w:44, h:48, prompt:'내려가기',         doorX:58,  doorY:204 },
+];
+
+// R&D lab (연구소) — research projects that unlock permanent fab tech
+const RND_TOP = 112, RND_BOT = 226, RND_LEFT = 28, RND_RIGHT = 452;
+const RND_STATIONS = [
+  { id:'terminal', x:188, y:120, w:104, h:46, prompt:'연구 단말기',    doorX:240, doorY:178 },
+  { id:'officedoor',x:34, y:118, w:34,  h:46, prompt:'사무실로',        doorX:51,  doorY:172 },
+];
+
+// R&D research projects — invest Si, complete after N days, permanent effect
+const RND_PROJECTS = [
+  { id:'nextNode', name:'차세대 공정 노드', cost:500, days:3, desc:'출하 기본 단가 영구 +4' },
+  { id:'yieldUp',  name:'수율 마스터리',    cost:350, days:2, desc:'캘리브 PERFECT 존 영구 확장' },
+  { id:'eco',      name:'친환경 공정',      cost:300, days:2, desc:'장비 Power 소모 30% 감소' },
+  { id:'autoAlign',name:'AI 자동 정렬',     cost:450, days:3, desc:'캘리브 마커 속도 감소(쉬워짐)' },
 ];
 
 // Shop items in order — separator placed between consumables and upgrades.
@@ -496,6 +540,21 @@ window.addEventListener('keydown', e => {
     handleSmockKey(k);
     return;
   }
+  // Break room input
+  if (state.scene === 'break'){
+    handleBreakKey(k);
+    return;
+  }
+  // R&D lab input
+  if (state.scene === 'rnd'){
+    handleRndKey(k);
+    return;
+  }
+  // Rooftop garden input
+  if (state.scene === 'roof'){
+    handleRoofKey(k);
+    return;
+  }
 
   // Shop modal swallows most input
   if (state.shopOpen){
@@ -503,6 +562,12 @@ window.addEventListener('keydown', e => {
     else if (k === 'arrowup' || k === 'w') shopMove(-1);
     else if (k === 'arrowdown' || k === 's') shopMove(1);
     else if (k === 'enter' || k === ' ') shopBuy();
+    return;
+  }
+
+  // QA inspection swallows keyboard (mouse-driven); Esc aborts
+  if (state.qaGame){
+    if (k === 'escape' && !state.qaGame.result) qaResolve();
     return;
   }
 
@@ -520,6 +585,25 @@ window.addEventListener('keydown', e => {
   if (k >= '1' && k <= '8') clickInventory(parseInt(k, 10));
 });
 window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+// Mouse — used by the QA defect-hunter (maps screen px → logical 480x270 coords)
+function cvsToLogical(e){
+  const r = cvs.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) / r.width  * W,
+    y: (e.clientY - r.top)  / r.height * H,
+  };
+}
+cvs.addEventListener('mousedown', e => {
+  if (!state.qaGame || state.qaGame.result) return;
+  const p = cvsToLogical(e);
+  qaClick(p.x, p.y);
+});
+cvs.addEventListener('mousemove', e => {
+  if (!state.qaGame) return;
+  const p = cvsToLogical(e);
+  state.qaMouse.x = p.x; state.qaMouse.y = p.y;
+});
 
 function isDown(...names){ return names.some(n => keys[n]); }
 
@@ -559,7 +643,10 @@ function doSceneSwitch(target){
   state.pmove = false;
   state.pwalk = 0;
   if (target === 'office'){
-    state.ox = 86; state.oy = 192; state.pdir = 'right';
+    // spawn near whichever door we came back through
+    if (from === 'break'){ state.ox = 410; state.oy = 178; state.pdir = 'left'; }
+    else if (from === 'rnd'){ state.ox = 129; state.oy = 124; state.pdir = 'down'; }
+    else { state.ox = 86; state.oy = 192; state.pdir = 'right'; }
     speak('self', SEASON_KR[getSeason()] + ' 사무실', 120);
   } else if (target === 'fab'){
     state.px = 32; state.py = 222; state.pdir = 'down';
@@ -567,6 +654,16 @@ function doSceneSwitch(target){
     if (from === 'fab'){ state.sx = 418; state.sy = 196; state.pdir = 'left'; }
     else { state.sx = 74; state.sy = 196; state.pdir = 'right'; }
     speak('self', '탈의실 (Gowning)', 110);
+  } else if (target === 'break'){
+    if (from === 'roof'){ state.bx = 56; state.by = 178; state.pdir = 'right'; }
+    else { state.bx = 410; state.by = 178; state.pdir = 'left'; }
+    speak('self', '휴게실', 110);
+  } else if (target === 'rnd'){
+    state.rx = 70; state.ry = 190; state.pdir = 'right';
+    speak('self', 'R&D 연구소', 110);
+  } else if (target === 'roof'){
+    state.rfx = 90; state.rfy = 200; state.pdir = 'right';
+    speak('self', SEASON_KR[getSeason()] + ' 옥상 정원', 130);
   }
 }
 function tickFade(){
@@ -597,6 +694,7 @@ function tryInteract(){
   if (state.won) return;
   if (state.miniGame) return;
   if (state.shopOpen) return;
+  if (state.qaGame) return;
   const s = nearestStation();
   if (!s) return;
 
@@ -604,10 +702,14 @@ function tryInteract(){
     if (state.carry){ showMsg('이미 들고 있음 — Q로 버리기'); return; }
     state.carry = 'raw';
     state.carryQ = 0;
+    state.carryQA = null;
     speak('self', 'Raw wafer 획득!', 90);
   }
   else if (s.id === 'exit'){
     switchScene('smock');
+  }
+  else if (s.id === 'qa'){
+    startQA();
   }
   else if (s.id === 'shop'){
     openShop();
@@ -649,9 +751,11 @@ function tryInteract(){
     const reward = computeShipReward(state.carryQ);
     gainSi(reward);
     onShipped(state.carryQ);
+    const gradeTag = state.carryQA === 'A' ? ' [A]' : state.carryQA === 'B' ? ' [B]' : '';
     state.carry = null;
     state.carryQ = 0;
-    speak('self', '+' + reward + ' Si !!', 110);
+    state.carryQA = null;
+    speak('self', '+' + reward + ' Si' + gradeTag + ' !!', 110);
     state.temp += (Math.random()-0.5) * 0.6;
     state.temp = Math.max(20, Math.min(25, state.temp));
   }
@@ -671,12 +775,13 @@ function tryInteract(){
 }
 
 function discardCarry(){
-  if (state.miniGame || state.shopOpen || state.won) return;
+  if (state.miniGame || state.shopOpen || state.won || state.qaGame) return;
   if (!state.carry){ showMsg('버릴 게 없음'); return; }
   const c = state.carry;
   const q = state.carryQ;
   state.carry = null;
   state.carryQ = 0;
+  state.carryQA = null;
   if (c === 'raw'){
     speak('self', 'Raw wafer 버림', 80);
   } else if (c === 'exposed'){
@@ -709,6 +814,18 @@ function rest(){
   // furniture daily perks
   if (state.furniture.coffeeMachine){ state.inventory.coffee += 1; }
   if (state.furniture.aquarium){ gainSi(20); }
+  // R&D: advance active research; complete and apply when days run out
+  if (state.research.active){
+    state.research.active.daysLeft--;
+    if (state.research.active.daysLeft <= 0){
+      const id = state.research.active.id;
+      state.research.done[id] = true;
+      state.research.active = null;
+      const p = RND_PROJECTS.find(x=>x.id===id);
+      unlock('RND_'+id, '🔬 연구 완료: ' + (p?p.name:id), 0);
+      setTimeout(()=>{ toast('🔬 R&D 연구 완료!<br>' + (p?p.name:'') + '<br><small>' + (p?p.desc:'') + '</small>', 3000); }, 200);
+    }
+  }
   // clear the GIGAFAB win banner if it's up, but keep all progress (it's an endless title)
   if (state.won){
     state.won = false;
@@ -835,7 +952,8 @@ function clickInventory(slot){
 }
 
 function startMiniGame(type){
-  state.miniGame = { type, pos: 0, dir: 1, speed: 0.016, result: null, lockedAt: 0 };
+  const sp = 0.016 * (state.research.done.autoAlign ? 0.7 : 1);   // R&D: AI auto-align
+  state.miniGame = { type, pos: 0, dir: 1, speed: sp, result: null, lockedAt: 0 };
 }
 
 function resolveMiniGame(){
@@ -849,8 +967,8 @@ function resolveMiniGame(){
     state.boostNext.perfect = false;
   } else {
     const p = m.pos;
-    // Wider PERFECT zone if upgraded (+2.5% half-width per level, levels 0..2)
-    const pad = 0.025 * state.upgrades.perfect;
+    // Wider PERFECT zone if upgraded (+2.5% half-width per level) + R&D yield mastery
+    const pad = 0.025 * state.upgrades.perfect + (state.research.done.yieldUp ? 0.04 : 0);
     if (p > 0.45 - pad && p < 0.55 + pad) result = 'perfect';
     else if (p > 0.28 && p < 0.72) result = 'good';
     else result = 'bad';
@@ -859,6 +977,7 @@ function resolveMiniGame(){
   m.lockedAt = state.t;
 
   const isLitho = m.type === 'litho';
+  const ecoMult = state.research.done.eco ? 0.7 : 1;   // R&D: green process
   if (result === 'bad'){
     // scrap the wafer
     state.carry = null;
@@ -878,13 +997,13 @@ function resolveMiniGame(){
       const baseBusy = 180 - 30 * state.upgrades.lithoBoost;
       state.lithoBusy = Math.max(30, baseBusy);
       state.lithoOutQ = outQ;
-      state.power = Math.max(0, state.power - 8);
+      state.power = Math.max(0, state.power - Math.round(8 * ecoMult));
     } else {
       state.inventory.etchant = Math.max(0, state.inventory.etchant - 1);
       const baseBusy = 180 - 30 * state.upgrades.etchBoost;
       state.etchBusy = Math.max(30, baseBusy);
       state.etchOutQ = outQ;
-      state.power = Math.max(0, state.power - 10);
+      state.power = Math.max(0, state.power - Math.round(10 * ecoMult));
     }
   }
 }
@@ -900,6 +1019,75 @@ function tickMiniGame(){
   m.pos += m.dir * m.speed;
   if (m.pos >= 1){ m.pos = 1; m.dir = -1; }
   if (m.pos <= 0){ m.pos = 0; m.dir = 1; }
+}
+
+// ============================================================
+//  QA INSPECTION  — defect-hunter (find & click defects under the scope)
+// ============================================================
+const QA_CX = 240, QA_CY = 130, QA_R = 76;   // microscope lens center + radius
+const QA_DEFECTS = 5;
+const QA_TIME = 9 * 60;                        // 9 seconds @ ~60fps
+
+function startQA(){
+  if (state.carry !== 'etched'){ showMsg('QA: 완성품(etched)만 검사 가능'); return; }
+  if (state.carryQA){ showMsg('이미 검사 완료된 웨이퍼'); return; }
+  const defects = [];
+  let tries = 0;
+  while (defects.length < QA_DEFECTS && tries < 200){
+    tries++;
+    const ang = Math.random() * Math.PI * 2;
+    const rad = Math.sqrt(Math.random()) * (QA_R - 12);
+    const x = QA_CX + Math.cos(ang) * rad;
+    const y = QA_CY + Math.sin(ang) * rad;
+    // keep them apart so clicks aren't ambiguous
+    if (defects.some(d => Math.hypot(d.x-x, d.y-y) < 18)) continue;
+    defects.push({ x, y, r: 3 + Math.random()*2, found:false, ph: Math.random()*6.28 });
+  }
+  state.qaGame = { defects, found:0, total:defects.length, timeLeft:QA_TIME, result:null, lockedAt:0, ripple:null };
+}
+
+function qaClick(lx, ly){
+  const g = state.qaGame;
+  if (!g || g.result) return;
+  g.ripple = { x:lx, y:ly, t:state.t, hit:false };
+  // only register inside the lens
+  if (Math.hypot(lx-QA_CX, ly-QA_CY) > QA_R) return;
+  for (const d of g.defects){
+    if (d.found) continue;
+    if (Math.hypot(lx-d.x, ly-d.y) < d.r + 7){
+      d.found = true;
+      g.found++;
+      g.ripple.hit = true;
+      if (g.found >= g.total) qaResolve();
+      return;
+    }
+  }
+}
+
+function qaResolve(){
+  const g = state.qaGame;
+  if (!g || g.result) return;
+  const ratio = g.found / g.total;
+  let grade = null, label;
+  if (ratio >= 0.999){ grade = 'A'; label = '⭐ Grade A — 무결점! 단가 +50%'; }
+  else if (ratio >= 0.6){ grade = 'B'; label = 'Grade B — 단가 +20%'; }
+  else { grade = null; label = '미인증 — 결함 다수 (보너스 없음)'; }
+  state.carryQA = grade;
+  g.result = { grade, label, found: g.found, total: g.total };
+  g.lockedAt = state.t;
+  if (grade === 'A') unlock('QA_PERFECT', '🔬 QA 무결점 검사!', 0);
+  if (!state.achv.QA_FIRST) unlock('QA_FIRST', '🔬 첫 QA 검사!', 0);
+}
+
+function tickQA(){
+  const g = state.qaGame;
+  if (!g) return;
+  if (g.result){
+    if (state.t - g.lockedAt > 110) state.qaGame = null;   // auto-close after showing result
+    return;
+  }
+  g.timeLeft--;
+  if (g.timeLeft <= 0) qaResolve();
 }
 
 // ============================================================
@@ -937,10 +1125,12 @@ function qualityMult(q){
 }
 
 function computeShipReward(q){
-  const base = fabInfo().base;
+  let base = fabInfo().base;
+  if (state.research.done.nextNode) base += 4;   // R&D: next-gen node
   const rushMult = state.rush ? 2 : 1;
   const officeMult = (state.officeBuff && state.officeBuff.shipMult) ? state.officeBuff.shipMult : 1;
-  return Math.round(base * qualityMult(q) * comboMult() * rushMult * officeMult);
+  const qaMult = state.carryQA === 'A' ? 1.5 : state.carryQA === 'B' ? 1.2 : 1;
+  return Math.round(base * qualityMult(q) * comboMult() * rushMult * officeMult * qaMult);
 }
 
 // central Si gain — also accrues lifetime total and checks fab level-up
@@ -1186,17 +1376,21 @@ function update(){
   if (state.scene === 'office'){ updateOffice(); return; }
   // Smock room runs its own update
   if (state.scene === 'smock'){ updateSmock(); return; }
+  if (state.scene === 'break'){ updateBreak(); return; }
+  if (state.scene === 'rnd'){ updateRnd(); return; }
+  if (state.scene === 'roof'){ updateRoof(); return; }
 
   // tick auxiliary systems (combo/rush pause during shop, minigame still resolves)
   tickMiniGame();
+  tickQA();
   if (!state.shopOpen){
     tickCombo();
     tickRush();
   }
 
-  // player movement (locked during minigame, shop, or fade)
+  // player movement (locked during minigame, QA, shop, or fade)
   let vx=0, vy=0;
-  if (!state.miniGame && !state.shopOpen && state.fadeDir === 0){
+  if (!state.miniGame && !state.qaGame && !state.shopOpen && state.fadeDir === 0){
     if (isDown('arrowup','w'))    { vy = -1; state.pdir='up'; }
     if (isDown('arrowdown','s'))  { vy =  1; state.pdir='down'; }
     if (isDown('arrowleft','a'))  { vx = -1; state.pdir='left'; }
@@ -1215,7 +1409,7 @@ function update(){
     ny = Math.max(FLOOR_TOP, Math.min(FLOOR_BOT, ny));
     // collision with stations (feet must stay below their bottoms or to side)
     for (const s of STATIONS){
-      if (s.id === 'npc' || s.id === 'crate' || s.id === 'exit' || s.id === 'shop') continue;
+      if (s.id === 'npc' || s.id === 'crate' || s.id === 'exit' || s.id === 'shop' || s.id === 'qa') continue;
       const sx0=s.x, sx1=s.x+s.w, sy0=s.y, sy1=s.y+s.h;
       // expand a bit for visual collision (player width ~ 8)
       if (nx > sx0 - 4 && nx < sx1 + 4 && ny > sy0 - 2 && ny < sy1 + 2){
@@ -1756,6 +1950,9 @@ function drawPlayer(){
   let fx, fy;
   if (state.scene === 'fab'){ fx = state.px; fy = state.py; }
   else if (state.scene === 'office'){ fx = state.ox; fy = state.oy; }
+  else if (state.scene === 'break'){ fx = state.bx; fy = state.by; }
+  else if (state.scene === 'rnd'){ fx = state.rx; fy = state.ry; }
+  else if (state.scene === 'roof'){ fx = state.rfx; fy = state.rfy; }
   else { fx = state.sx; fy = state.sy; }   // smock room
   const x = (fx - 7) | 0;
   const y = (fy - 26) | 0;
@@ -1825,6 +2022,11 @@ function drawSmockBody(dir, stride){
     R(cx+1,cy+2,6,1,C.black);
     R(cx+1,cy+4,6,1,C.black);
     P(cx+1, cy+1, C.parchment);
+    // QA cert badge
+    if (state.carryQA){
+      R(cx+5,cy-3,4,4, state.carryQA==='A' ? '#ffd24a' : C.grnHi);
+      R(cx+5,cy-3,4,1,'#fff8e8');
+    }
   }
   // LEGS
   let legShift = 0;
@@ -1929,6 +2131,9 @@ function drawSpeech(){
   let pfx, pfy;
   if (state.scene === 'fab'){ pfx = state.px; pfy = state.py; }
   else if (state.scene === 'office'){ pfx = state.ox; pfy = state.oy; }
+  else if (state.scene === 'break'){ pfx = state.bx; pfy = state.by; }
+  else if (state.scene === 'rnd'){ pfx = state.rx; pfy = state.ry; }
+  else if (state.scene === 'roof'){ pfx = state.rfx; pfy = state.rfy; }
   else { pfx = state.sx; pfy = state.sy; }
   const px = s.who === 'npc' ? 319 : (pfx|0);
   const py = s.who === 'npc' ? 180 : (pfy - 32);
@@ -2346,7 +2551,7 @@ function drawMiniGame(){
 
   // 기술 서적(책장) 힌트: PERFECT 존을 강조하고 마커가 들어오면 NOW! 표시
   if (state.furniture.bookshelf && !m.result){
-    const pad = 0.025 * state.upgrades.perfect;
+    const pad = 0.025 * state.upgrades.perfect + (state.research.done.yieldUp ? 0.04 : 0);
     const pMin = 0.45 - pad, pMax = 0.55 + pad;
     // glowing target band
     const pulse = 0.5 + 0.5*Math.abs(Math.sin(state.t*0.2));
@@ -2369,6 +2574,129 @@ function drawMiniGame(){
     txt(tmap[m.result], W/2, by+bh+10, 8, cmap[m.result], 'center');
   } else {
     txt('Space 로 정지 — 중앙(녹색)이 PERFECT', W/2, by+bh+10, 6, C.parchHi, 'center');
+  }
+}
+
+function drawQaBench(){
+  // a microscope inspection bench in the gap between litho and etcher
+  ctx.save(); ctx.translate(296, 130);
+  // bench top
+  R(0,34,50,8,'#5a6478'); R(0,34,50,2,'#7a8498'); R(0,42,50,1,'#3a4250');
+  R(4,42,3,4,'#3a4250'); R(43,42,3,4,'#3a4250');
+  // microscope base
+  R(16,28,18,7,'#2a3344'); R(16,28,18,1,'#4a5468');
+  // arm + body
+  R(22,10,5,18,'#3a4660'); R(22,10,5,1,'#5a6884');
+  R(20,6,12,6,'#46546e'); R(20,6,12,1,'#5a6884');
+  // eyepiece
+  R(24,1,5,6,'#2a3344'); R(25,0,3,2,'#6a7894');
+  // objective lens (glows)
+  R(23,22,7,5,'#1a2030'); R(24,23,5,3, (state.t>>4)&1 ? '#88e0f0' : '#5aa8c8');
+  // stage with a tiny wafer
+  R(17,26,16,2,'#222');
+  R(22,25,6,2,'#3a8c5c'); P(24,25,'#7ee0a0');
+  // monitor showing scan
+  R(36,18,12,12,'#1a2030'); R(37,19,10,10,'#1a3048');
+  R(38,21,7,1,'#88c0e0'); P(40,24,C.red); P(43,26,C.red);
+  // label
+  R(8,35,20,6,'#1a2533'); txt('QA', 18, 40, 5, '#88e0f0', 'center');
+  ctx.restore();
+}
+
+function drawQA(){
+  const g = state.qaGame;
+  if (!g) return;
+  // dim the fab
+  ctx.fillStyle = 'rgba(12,16,24,0.78)'; ctx.fillRect(0,0,W,H);
+
+  // title
+  txt('🔬 QA 검사 — 결함을 찾아 클릭하세요', W/2, 30, 7, '#cfe0f4', 'center');
+
+  // microscope body ring
+  ctx.fillStyle = '#1a2230';
+  ctx.beginPath(); ctx.arc(QA_CX, QA_CY, QA_R+8, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#2a3850';
+  ctx.beginPath(); ctx.arc(QA_CX, QA_CY, QA_R+5, 0, Math.PI*2); ctx.fill();
+
+  // lens content (clipped to circle)
+  ctx.save();
+  ctx.beginPath(); ctx.arc(QA_CX, QA_CY, QA_R, 0, Math.PI*2); ctx.clip();
+  // wafer surface base
+  ctx.fillStyle = '#13351f'; ctx.fillRect(QA_CX-QA_R, QA_CY-QA_R, QA_R*2, QA_R*2);
+  // circuit die grid (visual noise to scan through)
+  for (let gx=-QA_R; gx<QA_R; gx+=11){
+    R(QA_CX+gx, QA_CY-QA_R, 1, QA_R*2, '#1c4a2c');
+  }
+  for (let gy=-QA_R; gy<QA_R; gy+=11){
+    R(QA_CX-QA_R, QA_CY+gy, QA_R*2, 1, '#1c4a2c');
+  }
+  // some circuit traces / pads
+  for (let i=0;i<28;i++){
+    const sx = QA_CX-QA_R + ((i*53)%(QA_R*2));
+    const sy = QA_CY-QA_R + ((i*37)%(QA_R*2));
+    R(sx, sy, 4, 1, '#2c6a40');
+    if (i%3===0) R(sx, sy, 2, 2, '#3a8c5c');
+  }
+  // sheen
+  ctx.fillStyle = 'rgba(160,220,255,0.06)';
+  ctx.fillRect(QA_CX-QA_R, QA_CY-QA_R, QA_R*2, QA_R);
+
+  // defects
+  for (const d of g.defects){
+    if (d.found){
+      // marked: green ring + check
+      ctx.strokeStyle = C.grnHi; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(d.x, d.y, d.r+5, 0, Math.PI*2); ctx.stroke();
+      R(d.x-1, d.y, 2, 2, C.grnHi); R(d.x, d.y+1, 2, 1, C.grnHi);
+    } else {
+      // unfound: subtle reddish blemish that pulses (the "hunt")
+      const pulse = 0.55 + 0.45*Math.sin(state.t*0.12 + d.ph);
+      ctx.globalAlpha = 0.55 + 0.35*pulse;
+      ctx.fillStyle = '#7a2e1c';
+      ctx.beginPath(); ctx.arc(d.x, d.y, d.r+1.5, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#c0442a';
+      ctx.beginPath(); ctx.arc(d.x, d.y, d.r-0.5, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+  ctx.restore();
+
+  // crosshair reticle following the mouse (inside lens only)
+  if (!g.result && Math.hypot(state.qaMouse.x-QA_CX, state.qaMouse.y-QA_CY) <= QA_R){
+    const mxp = state.qaMouse.x, myp = state.qaMouse.y;
+    ctx.strokeStyle = 'rgba(180,230,255,0.7)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(mxp, myp, 6, 0, Math.PI*2); ctx.stroke();
+    R(mxp-9, myp, 5, 1, '#b4e6ff'); R(mxp+5, myp, 5, 1, '#b4e6ff');
+    R(mxp, myp-9, 1, 5, '#b4e6ff'); R(mxp, myp+5, 1, 5, '#b4e6ff');
+  }
+  // click ripple
+  if (g.ripple && state.t - g.ripple.t < 14){
+    const age = (state.t - g.ripple.t) / 14;
+    ctx.strokeStyle = g.ripple.hit ? 'rgba(116,196,144,'+(1-age)+')' : 'rgba(196,72,48,'+(1-age)+')';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(g.ripple.x, g.ripple.y, 3+age*8, 0, Math.PI*2); ctx.stroke();
+  }
+
+  // lens rim highlight
+  ctx.strokeStyle = '#6a8ab0'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(QA_CX, QA_CY, QA_R, 0, Math.PI*2); ctx.stroke();
+
+  // HUD: found count + timer
+  txt('결함 ' + g.found + ' / ' + g.total, QA_CX, QA_CY+QA_R+22, 7,
+      g.found===g.total ? C.grnHi : C.parchment, 'center');
+  // timer bar
+  const tb = 160, tx = QA_CX - tb/2, ty = QA_CY+QA_R+28;
+  R(tx, ty, tb, 5, '#1a2230');
+  const tf = Math.max(0, g.timeLeft / QA_TIME);
+  R(tx, ty, Math.round(tb*tf), 5, tf < 0.3 ? C.red : '#88c0e0');
+
+  // result banner
+  if (g.result){
+    const c = g.result.grade === 'A' ? '#ffd24a' : g.result.grade === 'B' ? C.grnHi : C.badge;
+    R(QA_CX-130, QA_CY-12, 260, 24, 'rgba(20,16,26,0.85)');
+    txt(g.result.label, QA_CX, QA_CY+4, 7, c, 'center');
+  } else {
+    txt('마우스로 클릭  ·  Esc 종료', QA_CX, ty+16, 5, C.parchMid, 'center');
   }
 }
 
@@ -2741,6 +3069,8 @@ function officeInteract(){
   if (s.id === 'desk') startOfficeWork();
   else if (s.id === 'shop') openOfficeShop();
   else if (s.id === 'fabdoor') switchScene('smock');
+  else if (s.id === 'breakdoor') switchScene('break');
+  else if (s.id === 'rnddoor') switchScene('rnd');
 }
 
 function updateOffice(){
@@ -2870,6 +3200,8 @@ function renderOffice(){
   const ents = [
     { sortY: 168, draw: () => drawDesk(th) },
     { sortY: 164, draw: () => drawFabDoor(th) },
+    { sortY: 100, draw: () => drawOfficeRndDoor(th) },
+    { sortY: 162, draw: () => drawOfficeBreakDoor(th) },
     { sortY: 172, draw: () => drawCatalogKiosk(th) },
     { sortY: 214, draw: () => drawOfficePlant(th) },
     { sortY: 150, draw: () => drawWaterCooler(th) },
@@ -3036,21 +3368,11 @@ function drawOfficeShop(){
   txt('↑↓ 선택   Enter 구매   B/Esc 닫기', mx+mw/2, fy+10, 6, C.parchMid, 'center');
 }
 
-function drawOfficeWall(th, sea){
-  // wall
-  R(0,22,W,78,th.wall);
-  R(0,22,W,2,th.wallHi);
-  R(0,98,W,2,th.wallSh);
-  // subtle vertical seams
-  for (let x=0;x<W;x+=64){ R(x,24,1,74,th.wallSh); }
-  // baseboard
-  R(0,98,W,4,th.wallDk);
-
-  // ---- big window with seasonal view ----
-  const wx=300, wy=30, ww=150, wh=58;
-  // frame
+// Reusable seasonal window (frame + sky + per-season scenery), tuned for 150x58
+function drawSeasonalWindow(wx, wy, ww, wh, sea, th){
+  const frame = '#6a5238';
   R(wx-4, wy-4, ww+8, wh+8, th.wallDk);
-  R(wx-2, wy-2, ww+4, wh+4, '#6a5238');
+  R(wx-2, wy-2, ww+4, wh+4, frame);
   // sky
   R(wx, wy, ww, wh, th.sky);
   R(wx, wy, ww, wh*0.55, th.sky);
@@ -3083,8 +3405,22 @@ function drawOfficeWall(th, sea){
     for (let i=0;i<10;i++){ const px=(state.t*0.3 + i*26 + Math.sin(state.t*0.02+i)*8)%ww; const py=(state.t*0.5+i*14)%wh; R(wx+px|0, wy+py|0, 2,2, '#ffffff'); }
   }
   // window cross bars
-  R(wx+ww/2-1, wy, 2, wh, '#6a5238');
-  R(wx, wy+wh/2-1, ww, 2, '#6a5238');
+  R(wx+ww/2-1, wy, 2, wh, frame);
+  R(wx, wy+wh/2-1, ww, 2, frame);
+}
+
+function drawOfficeWall(th, sea){
+  // wall
+  R(0,22,W,78,th.wall);
+  R(0,22,W,2,th.wallHi);
+  R(0,98,W,2,th.wallSh);
+  // subtle vertical seams
+  for (let x=0;x<W;x+=64){ R(x,24,1,74,th.wallSh); }
+  // baseboard
+  R(0,98,W,4,th.wallDk);
+
+  // ---- big window with seasonal view ----
+  drawSeasonalWindow(300, 30, 150, 58, sea, th);
 
   // ---- wall decor: seasonal poster + clock ----
   // company logo plaque
@@ -3187,8 +3523,29 @@ function drawFabDoor(th){
   R(48,106,6,2, blink?C.grnHi:C.grn);
 }
 
+function drawOfficeBreakDoor(th){
+  // wooden door on the right wall → break room
+  R(418,104,34,62,'#7a4838'); R(418,104,34,2,'#9a6048'); R(418,164,34,2,'#4a2818');
+  R(418,104,2,62,'#9a6048'); R(450,104,2,62,'#4a2818');
+  R(422,108,26,54,'#8a5840'); R(436,108,2,54,'#6a4028');
+  R(424,118,8,14,'#caa890'); R(425,119,6,12,'#dcc0a8');   // little window
+  R(440,134,3,4,'#d8c060');                                 // handle
+  R(422,150,26,8,'#5a3828'); txt('BREAK', 435, 156, 5, '#fce0c8', 'center');
+  R(432,106,6,2,(state.t>>4)&1 ? '#fcd060' : '#a07820');
+}
+
+function drawOfficeRndDoor(th){
+  // tech door on the back (top) wall → R&D lab
+  R(112,74,34,28,'#2a3550'); R(112,74,34,2,'#3a4868'); R(112,100,34,2,'#11161f');
+  R(112,74,2,28,'#3a4868'); R(144,74,2,28,'#11161f');
+  R(116,77,26,22,'#22304a');
+  R(120,80,8,8,'#0c1828'); R(121,81,6,6,'#1a4a6a');         // window
+  R(118,92,22,6,'#0e2a3a'); txt('R&D', 129, 97, 4, '#7ce0f0', 'center');
+  R(127,75,4,2,(state.t>>4)&1 ? '#7ce0f0' : '#3a7088');
+}
+
 function drawWaterCooler(th){
-  ctx.save(); ctx.translate(404, 120);
+  ctx.save(); ctx.translate(372, 120);
   // bottle
   R(4,0,16,14,'#a8d8e8'); R(4,0,16,2,'#c8ecf8'); R(6,2,12,10,'#88c8e0');
   // body
@@ -3626,6 +3983,593 @@ function drawSmockHud(){
 }
 
 // ============================================================
+//  BREAK ROOM (휴게실) — recover Power, casual clothes
+// ============================================================
+function nearestBreakStation(){
+  let best=null,bd=999;
+  for (const s of BREAK_STATIONS){
+    const d=Math.hypot(state.bx-s.doorX, state.by-s.doorY);
+    if (d<22 && d<bd){ bd=d; best=s; }
+  }
+  return best;
+}
+function handleBreakKey(k){
+  if (k===' '||k==='e') breakInteract();
+  if (k==='r') rest();
+}
+function breakInteract(){
+  const s=nearestBreakStation();
+  if(!s) return;
+  if (s.id==='sofa') takeBreak();
+  else if (s.id==='vending') vendingBuy();
+  else if (s.id==='roofdoor') switchScene('roof');
+  else if (s.id==='officedoor') switchScene('office');
+}
+function takeBreak(){
+  if (state.power >= state.maxPower){ showMsg('Power가 이미 가득함'); return; }
+  state.power = Math.min(state.maxPower, state.power + 45);
+  state.temp += (22 - state.temp) * 0.5;     // a breather steadies the line too
+  state.hour += 2;                            // costs 2 game-hours (no new day)
+  speak('self', '☕ 재충전 — Power +45 (2시간)', 130);
+  if (state.hour >= 26){ autoCollapse(); }
+}
+function vendingBuy(){
+  const cost = 40;
+  if (state.power >= state.maxPower){ showMsg('Power가 이미 가득함'); return; }
+  if (state.krw < cost){ showMsg('KRW 부족 (40 필요)'); return; }
+  state.krw -= cost;
+  state.power = Math.min(state.maxPower, state.power + 30);
+  speak('self', '🥤 에너지드링크 — Power +30', 120);
+}
+function roomMove(get, set, bounds, blockers){
+  let vx=0,vy=0;
+  if (state.fadeDir===0){
+    if (isDown('arrowup','w')){vy=-1;state.pdir='up';}
+    if (isDown('arrowdown','s')){vy=1;state.pdir='down';}
+    if (isDown('arrowleft','a')){vx=-1;state.pdir='left';}
+    if (isDown('arrowright','d')){vx=1;state.pdir='right';}
+  }
+  state.pmove=!!(vx||vy);
+  if (state.pmove){
+    if(vx&&vy){vx*=0.707;vy*=0.707;}
+    const sp=1.3, p=get();
+    let nx=Math.max(bounds[0],Math.min(bounds[1],p.x+vx*sp));
+    let ny=Math.max(bounds[2],Math.min(bounds[3],p.y+vy*sp));
+    for (const b of blockers){
+      const inB=(X,Y)=>X>b.x-4&&X<b.x+b.w+4&&Y>b.y-2&&Y<b.y+b.h+2;
+      if (inB(nx,ny)){
+        if (!inB(nx,p.y)) ny=p.y;
+        else if (!inB(p.x,ny)) nx=p.x;
+        else { nx=p.x; ny=p.y; }
+      }
+    }
+    set(nx,ny);
+    state.pwalkAcc+=sp; if(state.pwalkAcc>5){state.pwalkAcc=0;state.pwalk=(state.pwalk+1)%4;}
+  } else state.pwalk=0;
+}
+function updateBreak(){
+  roomMove(()=>({x:state.bx,y:state.by}), (x,y)=>{state.bx=x;state.by=y;},
+    [BREAK_LEFT,BREAK_RIGHT,BREAK_TOP,BREAK_BOT], [BREAK_STATIONS[0]]);
+  state.prompt = nearestBreakStation();
+}
+function renderBreak(){
+  const sea = getSeason();
+  const th = SEASON_THEME[sea];
+  R(0,0,W,H,th.wallDk);
+  // wall (seasonal, same palette as office)
+  R(0,22,W,78,th.wall); R(0,22,W,2,th.wallHi); R(0,98,W,2,th.wallSh);
+  for (let x=0;x<W;x+=64){ R(x,24,1,74,th.wallSh); }
+  R(0,98,W,4,th.wallDk);
+  // seasonal window (shared with office)
+  drawSeasonalWindow(140, 30, 150, 58, sea, th);
+  // sign
+  R(300,34,96,22,'#7a4838'); txt('BREAK ROOM', 348, 45, 6, '#fce0c8','center');
+  txt('휴게실', 348, 52, 4, '#e8c0a0','center');
+  // floor (seasonal tones, plank layout)
+  for (let y=102;y<238;y+=16){
+    for (let x=0;x<W;x+=40){
+      R(x,y,40,16,((x/40|0)+(y/16|0))&1?th.floor:th.floorAlt);
+      R(x,y,40,1,th.floorLine);
+    }
+  }
+  // rug (seasonal accent)
+  ctx.globalAlpha = 0.85;
+  R(286,176,128,44,th.accent);
+  ctx.globalAlpha = 1;
+  R(286,176,128,2,th.wallHi);
+
+  const ents=[
+    { sortY:184, draw:drawSofa },
+    { sortY:170, draw:drawVending },
+    { sortY:164, draw:drawBreakOfficeDoor },
+    { sortY:163, draw:drawBreakRoofDoor },
+    { sortY:212, draw:()=>drawBreakPlant(th) },
+    { sortY: state.by+0.5, draw:drawPlayer },
+  ];
+  ents.sort((a,b)=>a.sortY-b.sortY);
+  for (const e of ents) e.draw();
+
+  drawSeasonParticles(sea, th);   // petals / motes / leaves / snow
+  drawDayNightTint();             // evening mood through the window
+  drawSpeech();
+  drawBreakHud();
+  drawPrompt();
+  drawMsg();
+  drawAchv();
+}
+function drawSofa(){
+  ctx.save(); ctx.translate(300,150);
+  R(0,8,96,26,'#5a78a8'); R(0,8,96,3,'#6a88bc');           // seat base
+  R(0,0,96,12,'#6a88bc'); R(0,0,96,2,'#7a98cc');           // backrest
+  R(0,6,10,28,'#5a78a8'); R(86,6,10,28,'#5a78a8');         // arms
+  R(10,10,36,6,'#7a98cc'); R(50,10,36,6,'#7a98cc');        // cushions
+  R(0,32,96,3,'#3a4c68');
+  // coffee table + cups
+  R(30,40,36,3,'#6a4a30'); R(33,43,3,5,'#5a3c24'); R(60,43,3,5,'#5a3c24');
+  R(38,36,7,4,'#e0e4ec'); R(52,36,6,4,'#d8c0a0');
+  ctx.restore();
+}
+function drawVending(){
+  ctx.save(); ctx.translate(96,120);
+  R(0,0,30,50,'#b03838'); R(0,0,30,2,'#c85050'); R(0,48,30,2,'#7a2424');
+  R(2,3,18,30,'#1a2030'); R(3,4,16,28,'#2a3a50');          // glass
+  // drink rows
+  for (let r=0;r<3;r++) for (let c=0;c<3;c++){
+    R(4+c*5, 6+r*9, 4, 7, ['#e0a020','#48a860','#3878b0'][(r+c)%3]);
+  }
+  R(22,6,6,16,'#2a2024');                                  // button panel
+  R(23,8,4,3,'#88c0e0'); R(23,13,4,3,'#a0a8b0');
+  R(4,38,22,8,'#15100a'); R(6,40,18,4,'#3a3024');          // dispenser
+  txt('₩', 14, 45, 5, '#fce078','center');
+  ctx.restore();
+}
+function drawBreakPlant(th){
+  ctx.save(); ctx.translate(424,182);
+  R(2,18,14,12,th.plantPot); R(2,18,14,2,'#d89868');
+  R(7,6,3,12,'#5a7838');
+  for (const [bx,by,r] of [[0,0,9],[8,-2,9],[3,5,8]]){ R(bx,by,r,r-1,th.plant); R(bx+1,by,3,2,'#74c490'); }
+  ctx.restore();
+}
+function drawBreakOfficeDoor(){
+  R(418,104,34,62,'#8a6a44'); R(418,104,34,2,'#a8845a'); R(450,104,2,62,'#5a4228');
+  R(422,108,26,54,'#9a7850'); R(438,108,2,54,'#7a5e3c');
+  R(424,134,3,4,'#d8c060');
+  R(422,150,26,8,'#2a3850'); txt('OFFICE', 435, 156, 5, '#cfe0f4','center');
+}
+function drawBreakRoofDoor(){
+  // stairwell door up to the rooftop garden (left wall)
+  R(28,104,30,60,'#5a7048'); R(28,104,30,2,'#74905c'); R(28,162,30,2,'#3a4c2c');
+  R(56,104,2,60,'#3a4c2c');
+  R(32,108,22,52,'#6a845a'); R(43,108,2,52,'#4a5c38');
+  // window
+  R(36,116,12,12,'#bfe0ec'); R(36,116,12,1,'#dcecf4');
+  R(48,134,3,4,'#d8c060');
+  // up arrow + sign
+  R(34,146,22,8,'#2a3a24'); txt('↑ ROOF', 45, 152, 5, '#bfe8c8','center');
+  R(40,106,6,2,(state.t>>4)&1 ? '#9ee0a8' : '#5a8c64');
+}
+function drawBreakHud(){
+  R(0,0,W,22,'#5a3828'); R(0,0,W,2,'#7a4838'); R(0,20,W,2,'#3a2418');
+  txt('BREAK ROOM · 휴게실', 8, 14, 6, '#fce0c8');
+  // power pill
+  const pct=Math.round(state.power/state.maxPower*100);
+  R(300,5,80,13,'#3a2418');
+  txt('PWR ' + pct + '%', 340, 14, 6, pct<30?C.red:C.grnHi,'center');
+  txt('KRW ' + state.krw.toLocaleString(), 470, 14, 6, C.badge, 'end');
+  R(0,H-14,W,14,'#5a3828'); R(0,H-14,W,1,'#7a4838');
+  txt('소파=휴식(+Power, 2시간)  ·  자판기=40₩ 에너지드링크  ·  문=사무실', W/2, H-4, 6, '#e8c0a0','center');
+}
+
+// ============================================================
+//  R&D LAB (연구소) — fund research projects → permanent fab tech
+// ============================================================
+function nearestRndStation(){
+  let best=null,bd=999;
+  for (const s of RND_STATIONS){
+    const d=Math.hypot(state.rx-s.doorX, state.ry-s.doorY);
+    if (d<22 && d<bd){ bd=d; best=s; }
+  }
+  return best;
+}
+function handleRndKey(k){
+  if (state.rndMenuOpen){
+    if (k==='escape'||k==='b') state.rndMenuOpen=false;
+    else if (k==='arrowup'||k==='w') rndMove(-1);
+    else if (k==='arrowdown'||k==='s') rndMove(1);
+    else if (k==='enter'||k===' ') rndStart();
+    return;
+  }
+  if (k===' '||k==='e') rndInteract();
+  if (k==='r') rest();
+}
+function rndInteract(){
+  const s=nearestRndStation();
+  if(!s) return;
+  if (s.id==='terminal'){ state.rndMenuOpen=true; state.rndCursor=0; }
+  else if (s.id==='officedoor') switchScene('office');
+}
+function rndMove(d){
+  let n=state.rndCursor+d;
+  if (n<0) n=RND_PROJECTS.length-1;
+  if (n>=RND_PROJECTS.length) n=0;
+  state.rndCursor=n;
+}
+function rndStart(){
+  const p=RND_PROJECTS[state.rndCursor];
+  if (state.research.done[p.id]){ speak('self','이미 연구 완료', 70); return; }
+  if (state.research.active){ speak('self','다른 연구 진행 중', 90); return; }
+  if (state.silicon < p.cost){ speak('self','Si 부족 ('+p.cost+' 필요)', 90); return; }
+  state.silicon -= p.cost;
+  state.research.active = { id:p.id, daysLeft:p.days };
+  speak('self', '🔬 ' + p.name + ' 연구 시작 (' + p.days + '일)', 150);
+  state.rndMenuOpen = false;
+}
+function updateRnd(){
+  if (!state.rndMenuOpen){
+    roomMove(()=>({x:state.rx,y:state.ry}), (x,y)=>{state.rx=x;state.ry=y;},
+      [RND_LEFT,RND_RIGHT,RND_TOP,RND_BOT], [RND_STATIONS[0]]);
+  } else { state.pmove=false; state.pwalk=0; }
+  state.prompt = state.rndMenuOpen ? null : nearestRndStation();
+}
+function renderRnd(){
+  R(0,0,W,H,'#161e2c');
+  // wall (dark techy)
+  R(0,22,W,80,'#202a3e'); R(0,22,W,2,'#2e3a52'); R(0,100,W,2,'#11161f');
+  for (let x=0;x<W;x+=32){ R(x,24,1,76,'#1a2230'); }
+  // glowing data panels on the wall
+  for (let i=0;i<5;i++){
+    const px=40+i*86;
+    R(px,32,60,40,'#12203a'); R(px,32,60,1,'#2a6088');
+    for (let l=0;l<5;l++){ R(px+4, 37+l*6, 8+((state.t/20+i*3+l)%40), 2, l%2?'#2a7a9a':'#2a5a8a'); }
+    if ((state.t>>4)%5===i) R(px+50,35,4,4,C.grnHi);
+  }
+  // sign
+  R(196,30,88,22,'#0e2a3a'); txt('R&D LAB', 240, 41, 6, '#7ce0f0','center');
+  txt('연구소', 240, 49, 4, '#5ab0c8','center');
+  // floor (panel)
+  for (let y=102;y<238;y+=16){
+    for (let x=0;x<W;x+=24){
+      R(x,y,24,16,((x/24|0)+(y/16|0))&1?'#1c2636':'#18212f');
+      R(x,y,24,1,'#232f44'); R(x,y,1,16,'#232f44');
+    }
+  }
+  // led floor strip
+  for (let x=150;x<330;x+=8){ R(x,214,4,1, (state.t>>3)%2?'#2a7a9a':'#1a4a6a'); }
+
+  const ents=[
+    { sortY:166, draw:drawRndTerminal },
+    { sortY:164, draw:drawRndOfficeDoor },
+    { sortY:150, draw:drawServerRack },
+    { sortY: state.ry+0.5, draw:drawPlayer },
+  ];
+  ents.sort((a,b)=>a.sortY-b.sortY);
+  for (const e of ents) e.draw();
+
+  drawSpeech();
+  drawRndHud();
+  drawPrompt();
+  drawMsg();
+  drawRndMenu();
+  drawAchv();
+}
+function drawRndTerminal(){
+  ctx.save(); ctx.translate(188,120);
+  // desk
+  R(0,30,104,10,'#2a3550'); R(0,30,104,2,'#3a4868');
+  R(6,40,4,8,'#1a2334'); R(94,40,4,8,'#1a2334');
+  // big holo monitor
+  R(28,2,48,30,'#0c1828'); R(30,4,44,26,'#103048');
+  // holographic circuit
+  for (let i=0;i<5;i++){ R(34,8+i*4,36,1,'#2a6a9a'); }
+  R(40,8,1,18,'#3a8cc8'); R(56,8,1,18,'#3a8cc8'); R(66,8,1,18,'#3a8cc8');
+  for (let i=0;i<6;i++){ if((state.t/15+i)%4<2) R(38+i*5,10+(i%3)*5,2,2,C.grnHi); }
+  R(28,2,48,1,'#2a6a9a');
+  // keyboard
+  R(34,33,36,4,'#1a2334'); for(let i=0;i<8;i++) R(36+i*4,34,3,2,'#2a3a52');
+  // active-research indicator light
+  const act = state.research.active;
+  R(80,4,4,4, act ? ((state.t>>4)&1?C.badge:'#7a5a10') : '#2a3a52');
+  ctx.restore();
+}
+function drawServerRack(){
+  ctx.save(); ctx.translate(360,116);
+  R(0,0,40,52,'#1a2230'); R(0,0,40,2,'#2a3648'); R(0,50,40,2,'#0e1018');
+  for (let r=0;r<6;r++){
+    R(3,4+r*8,34,6,'#10161f');
+    for (let c=0;c<5;c++){ R(6+c*6, 6+r*8, 3, 2, (state.t>>3)%6===((r+c)%6)?C.grnHi:'#1c4a3a'); }
+  }
+  ctx.restore();
+}
+function drawRndOfficeDoor(){
+  R(34,104,34,62,'#2a3550'); R(34,104,34,2,'#3a4868'); R(66,104,2,62,'#11161f');
+  R(38,108,26,54,'#22304a'); R(50,108,2,54,'#1a2638');
+  R(40,118,8,16,'#0c1828'); R(41,119,6,14,'#1a4a6a');
+  R(38,150,26,8,'#0e2a3a'); txt('OFFICE', 51, 156, 5, '#7ce0f0','center');
+  R(48,106,6,2, (state.t>>4)&1?'#7ce0f0':'#3a7088');
+}
+function drawRndHud(){
+  R(0,0,W,22,'#0e1a28'); R(0,0,W,2,'#1a4a6a'); R(0,20,W,2,'#070d15');
+  txt('R&D LAB · 연구소', 8, 14, 6, '#7ce0f0');
+  txt('Si ' + state.silicon, 300, 14, 6, C.parchment);
+  // active research status
+  const act=state.research.active;
+  if (act){
+    const p=RND_PROJECTS.find(x=>x.id===act.id);
+    txt('연구중 ' + act.daysLeft + '일', 470, 14, 6, C.badge, 'end');
+  } else {
+    txt('대기', 470, 14, 6, '#5ab0c8', 'end');
+  }
+  R(0,H-14,W,14,'#0e1a28'); R(0,H-14,W,1,'#1a4a6a');
+  txt('단말기=연구 프로젝트  ·  문=사무실  ·  연구는 휴식(R)마다 진행', W/2, H-4, 6, '#5ab0c8','center');
+}
+function drawRndMenu(){
+  if (!state.rndMenuOpen) return;
+  ctx.fillStyle='rgba(8,12,20,0.78)'; ctx.fillRect(0,0,W,H);
+  const mw=320, mh=192, mx=(W-mw)/2, my=(H-mh)/2;
+  R(mx-3,my-3,mw+6,mh+6,'#2a6a9a');
+  R(mx,my,mw,mh,'#10202f'); R(mx,my,mw,2,'#2a6a9a'); R(mx,my+mh-2,mw,2,'#0a1722');
+  R(mx+8,my+8,mw-16,20,'#0c1828'); txt('🔬 R&D 연구 프로젝트', mx+mw/2, my+22, 7, '#7ce0f0','center');
+  txt('Si ' + state.silicon, mx+mw-14, my+44, 6, C.parchment, 'end');
+
+  const act=state.research.active;
+  const rowY0=my+52, rowH=28;
+  for (let i=0;i<RND_PROJECTS.length;i++){
+    const p=RND_PROJECTS[i], ry=rowY0+i*rowH;
+    const sel=i===state.rndCursor;
+    const done=state.research.done[p.id];
+    const researching = act && act.id===p.id;
+    if (sel){ R(mx+10,ry-2,mw-20,rowH-4,'#16324a'); R(mx+10,ry-2,mw-20,1,'#2a6a9a'); txt('▶',mx+16,ry+14,7,C.badge); }
+    txt(p.name, mx+30, ry+9, 6, done?'#5a7a6a':'#cfe6f4');
+    txt(p.desc, mx+30, ry+20, 5, '#6a90a8');
+    if (done) txt('완료 ✓', mx+mw-16, ry+13, 6, C.grnHi, 'end');
+    else if (researching) txt(act.daysLeft+'일 남음', mx+mw-16, ry+13, 6, C.badge, 'end');
+    else txt(p.cost+' Si / '+p.days+'일', mx+mw-16, ry+13, 5, state.silicon>=p.cost?'#cfe6f4':C.red, 'end');
+  }
+  const fy=my+mh-18; R(mx+8,fy,mw-16,12,'#0a1722');
+  txt('↑↓ 선택   Enter 연구 시작   Esc 닫기', mx+mw/2, fy+9, 5, '#5ab0c8','center');
+}
+
+// ============================================================
+//  ROOFTOP GARDEN (옥상 정원) — seasonal landscape + time-of-day sky
+// ============================================================
+function nearestRoofStation(){
+  let best=null,bd=999;
+  for (const s of ROOF_STATIONS){
+    const d=Math.hypot(state.rfx-s.doorX, state.rfy-s.doorY);
+    if (d<24 && d<bd){ bd=d; best=s; }
+  }
+  return best;
+}
+function handleRoofKey(k){
+  if (k===' '||k==='e') roofInteract();
+  if (k==='r') rest();
+}
+function roofInteract(){
+  const s=nearestRoofStation();
+  if(!s) return;
+  if (s.id==='bench') meditate();
+  else if (s.id==='breakdoor') switchScene('break');
+}
+function meditate(){
+  if (state.power >= state.maxPower){ showMsg('이미 가득 충전됨 — 풍경을 즐겨요'); return; }
+  state.power = Math.min(state.maxPower, state.power + 55);
+  state.temp += (22 - state.temp) * 0.7;
+  state.hour += 3;                                 // a long, deep break
+  speak('self', '🌿 사색 — 마음이 맑아짐 (Power +55)', 150);
+  unlock('ROOF_ZEN', '🌸 옥상에서 한숨 돌리기', 0);
+  if (state.hour >= 26){ autoCollapse(); }
+}
+function updateRoof(){
+  roomMove(()=>({x:state.rfx,y:state.rfy}), (x,y)=>{state.rfx=x;state.rfy=y;},
+    [ROOF_LEFT,ROOF_RIGHT,ROOF_TOP,ROOF_BOT], [ROOF_STATIONS[0]]);
+  state.prompt = nearestRoofStation();
+}
+
+// time-of-day sky color (top + bottom), interpolated across keyframes
+const ROOF_SKY = [
+  { h:5,  top:[20,26,54],   bot:[64,60,96]   },  // pre-dawn
+  { h:6,  top:[58,74,128],  bot:[238,158,112] },  // dawn
+  { h:8,  top:[120,176,224],bot:[202,230,240] },  // morning
+  { h:12, top:[92,172,232], bot:[200,236,248] },  // noon
+  { h:16, top:[120,176,222],bot:[206,226,238] },  // afternoon
+  { h:18, top:[98,98,162],  bot:[244,162,96]  },  // sunset
+  { h:20, top:[46,42,94],   bot:[172,92,128]  },  // dusk
+  { h:22, top:[16,20,48],   bot:[42,44,84]    },  // night
+  { h:26, top:[8,10,28],    bot:[20,24,54]    },  // deep night
+];
+function roofSky(){
+  const h=state.hour, k=ROOF_SKY;
+  const lc=(a,b,t)=>[0,1,2].map(i=>Math.round(a[i]+(b[i]-a[i])*t));
+  if (h<=k[0].h) return {top:k[0].top, bot:k[0].bot};
+  if (h>=k[k.length-1].h) return {top:k[k.length-1].top, bot:k[k.length-1].bot};
+  for (let i=0;i<k.length-1;i++){
+    if (h>=k[i].h && h<=k[i+1].h){
+      const t=(h-k[i].h)/(k[i+1].h-k[i].h);
+      return { top:lc(k[i].top,k[i+1].top,t), bot:lc(k[i].bot,k[i+1].bot,t) };
+    }
+  }
+  return {top:k[0].top, bot:k[0].bot};
+}
+function dimHex(hex, f){
+  const n=parseInt(hex.slice(1),16);
+  return 'rgb('+Math.round(((n>>16)&255)*f)+','+Math.round(((n>>8)&255)*f)+','+Math.round((n&255)*f)+')';
+}
+function roofStarAlpha(){
+  const h=state.hour;
+  if (h>=20 || h<5) return 1;
+  if (h>=18 && h<20) return (h-18)/2;
+  if (h>=5 && h<7) return (7-h)/2;
+  return 0;
+}
+
+function renderRoof(){
+  const sea=getSeason(), th=SEASON_THEME[sea];
+  // SKY gradient (time of day)
+  const sky=roofSky();
+  const g=ctx.createLinearGradient(0,0,0,150);
+  g.addColorStop(0,'rgb('+sky.top.join(',')+')');
+  g.addColorStop(1,'rgb('+sky.bot.join(',')+')');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,152);
+
+  // stars
+  const sa=roofStarAlpha();
+  if (sa>0.02){
+    ctx.globalAlpha=sa;
+    for (let i=0;i<46;i++){
+      const x=(i*89)%W, y=(i*47)%116+4;
+      if (0.5+0.5*Math.sin(state.t*0.05+i) > 0.55) P(x,y,'#ffffff');
+    }
+    ctx.globalAlpha=1;
+  }
+  // sun / moon
+  drawRoofSunMoon();
+  // clouds (daytime)
+  drawRoofClouds();
+  // distant seasonal landscape
+  drawRoofLandscape(sea, th);
+  // rooftop deck + railing
+  drawRoofDeck();
+  // string lights (glow at night)
+  drawRoofLights();
+
+  const ents=[
+    { sortY:174, draw:()=>drawRoofPlanters(th, sea) },
+    { sortY:200, draw:drawRoofBench },
+    { sortY:172, draw:drawRoofStairHut },
+    { sortY: state.rfy+0.5, draw:drawPlayer },
+  ];
+  ents.sort((a,b)=>a.sortY-b.sortY);
+  for (const e of ents) e.draw();
+
+  drawSeasonParticles(sea, th);   // petals / motes / leaves / snow over everything
+
+  drawSpeech();
+  drawRoofHud(sea);
+  drawPrompt();
+  drawMsg();
+  drawAchv();
+}
+function drawRoofSunMoon(){
+  const h=state.hour;
+  if (h>=5 && h<19){            // SUN
+    const p=(h-5)/14, x=20+p*440, y=132-Math.sin(p*Math.PI)*104;
+    ctx.globalAlpha=0.28; ctx.fillStyle='#ffe48a';
+    ctx.beginPath(); ctx.arc(x,y,20,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1;
+    ctx.fillStyle='#ffe070'; ctx.beginPath(); ctx.arc(x,y,9,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#fff2bc'; ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2); ctx.fill();
+  } else {                       // MOON
+    let hh=h<5?h+24:h;           // 19..29
+    const p=(hh-19)/10, x=20+p*440, y=120-Math.sin(p*Math.PI)*92;
+    ctx.fillStyle='#eef2fa'; ctx.beginPath(); ctx.arc(x,y,8,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#cdd6e6';
+    ctx.beginPath(); ctx.arc(x-2,y-1,1.6,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+2,y+2,1.3,0,Math.PI*2); ctx.fill();
+  }
+}
+function drawRoofClouds(){
+  const h=state.hour; if (h<6.5||h>18.5) return;
+  ctx.globalAlpha=0.75;
+  for (let i=0;i<3;i++){
+    const x=((state.t*0.18 + i*190)%(W+90))-50, y=28+i*20;
+    R(x,y,30,7,'#f2f6ff'); R(x+7,y-4,18,6,'#f8faff'); R(x+15,y-7,12,6,'#ffffff');
+  }
+  ctx.globalAlpha=1;
+}
+function drawRoofLandscape(sea, th){
+  // far hills (two dimmed seasonal layers)
+  for (let x=0;x<W;x+=8){ const hh=12+10*Math.sin(x*0.035+1); R(x,132-hh,8,hh+24, dimHex(th.tree,0.4)); }
+  for (let x=0;x<W;x+=8){ const hh=8+7*Math.sin(x*0.05+3); R(x,140-hh,8,hh+22, dimHex(th.tree,0.55)); }
+  // ridge trees (seasonal foliage silhouettes)
+  for (let i=0;i<6;i++){
+    const x=34+i*78, y=130;
+    R(x,y-2,3,10,dimHex(th.treeDk,0.6));
+    R(x-6,y-10,15,9, dimHex(th.tree,0.8)); R(x-3,y-14,9,6, dimHex(th.tree,0.95));
+  }
+}
+function drawRoofDeck(){
+  // safety railing at the roof edge
+  R(0,148,W,3,'#aab4c2');
+  R(0,151,W,1,'#7a8492');
+  for (let x=14;x<W;x+=22){ R(x,150,2,12,'#9aa4b2'); }
+  R(0,160,W,2,'#6a7482');
+  // deck tiles
+  for (let y=162;y<240;y+=16){
+    for (let x=0;x<W;x+=28){
+      R(x,y,28,16, ((x/28|0)+(y/16|0))&1 ? '#9c968a' : '#908a7e');
+      R(x,y,28,1,'#aaa498'); R(x,y,1,16,'#aaa498');
+    }
+  }
+}
+function drawRoofLights(){
+  // string lights along the railing — warm glow grows after dark
+  const a = roofStarAlpha();
+  for (let x=18;x<W;x+=30){
+    const sag = Math.sin(x*0.3)*2;
+    R(x,146+sag,2,3, a>0.3 ? '#ffe49a' : '#8a8470');
+    if (a>0.3){ ctx.globalAlpha=a*0.5; R(x-1,145+sag,4,5,'#ffd060'); ctx.globalAlpha=1; }
+  }
+}
+function drawPlanterBox(px, py, th, sea){
+  // wooden planter
+  R(px,py,40,12,'#8a6a44'); R(px,py,40,2,'#a8845a'); R(px,py+10,40,2,'#5a4228');
+  for (let i=0;i<5;i++) R(px+2+i*8,py+2,1,8,'#6a4e30');
+  // soil
+  R(px+2,py-1,36,3,'#4a3422');
+  // seasonal planting
+  if (sea===0){ // spring tulips
+    for (let i=0;i<5;i++){ const fx=px+5+i*7; R(fx,py-7,1,7,'#4a8a3c'); R(fx-2,py-10,5,4, ['#e85a8a','#f0a040','#e85a8a','#d04ad0','#f0a040'][i]); }
+  } else if (sea===1){ // summer lush + sunflowers
+    for (let i=0;i<6;i++){ const fx=px+4+i*6; R(fx,py-8,2,8,th.tree); R(fx-1,py-9,4,3,'#5ec070'); }
+    R(px+16,py-12,5,5,'#f0c040'); R(px+17,py-11,3,3,'#7a5020');
+  } else if (sea===2){ // fall mums
+    for (let i=0;i<5;i++){ const fx=px+5+i*7; R(fx,py-6,1,6,'#7a5028'); R(fx-2,py-9,5,4, ['#e07828','#d8682c','#e0a020','#c85020','#e07828'][i]); }
+  } else { // winter — snow-capped evergreens
+    for (let i=0;i<4;i++){ const fx=px+6+i*9; R(fx-3,py-9,7,9,'#2e6a48'); R(fx-2,py-11,5,4,'#3a7a54'); R(fx-2,py-12,5,2,'#ffffff'); }
+    R(px+2,py-1,36,2,'#eef4fa');  // snow on soil
+  }
+}
+function drawRoofPlanters(th, sea){
+  drawPlanterBox(36, 196, th, sea);
+  drawPlanterBox(150, 200, th, sea);
+  drawPlanterBox(392, 196, th, sea);
+}
+function drawRoofBench(){
+  // a garden bench facing the view (the 사색 spot)
+  ctx.save(); ctx.translate(214,178);
+  R(0,10,84,5,'#7a5a3a'); R(0,10,84,1,'#9a7048');         // seat
+  R(0,0,84,8,'#8a6644'); R(0,0,84,2,'#a87a4e');           // backrest
+  for (let i=0;i<5;i++) R(6+i*16,0,1,8,'#6a4a2c');        // slats
+  R(4,15,4,8,'#5a4028'); R(76,15,4,8,'#5a4028');          // legs
+  R(38,4,8,4,'#2a3a24'); txt('禪', 42, 7, 4, '#bfe8c8','center');
+  ctx.restore();
+}
+function drawRoofStairHut(){
+  // stairwell housing with the door back down to the break room
+  ctx.save(); ctx.translate(30,118);
+  R(0,0,52,48,'#7a8290'); R(0,0,52,2,'#949cac'); R(0,46,52,2,'#5a6270');
+  R(0,0,2,48,'#949cac'); R(50,0,2,48,'#5a6270');
+  // roof cap
+  R(-2,-4,56,6,'#5a6270'); R(-2,-4,56,2,'#6a7280');
+  // door
+  R(16,14,22,34,'#5a4632'); R(16,14,22,2,'#6c5238'); R(28,16,2,30,'#4a3826');
+  R(20,22,6,10,'#1a2c40'); R(21,23,4,8,'#3a6088');
+  R(32,30,2,3,'#d8c060');
+  // sign
+  R(12,4,28,7,'#2a3a24'); txt('↓ 휴게실', 26, 10, 4, '#bfe8c8','center');
+  ctx.restore();
+}
+function drawRoofHud(sea){
+  R(0,0,W,22,'#2a3a4a'); R(0,0,W,2,'#3a5a6a'); R(0,20,W,2,'#16242e');
+  txt('ROOFTOP GARDEN · 옥상 정원', 8, 14, 6, '#cfe8f4');
+  // season + clock
+  R(300,5,80,13,'#16242e'); R(304,8,8,8,SEASON_THEME[sea].accent);
+  txt(SEASON_AB[sea]+' '+SEASON_KR[sea], 340, 14, 5, SEASON_THEME[sea].accent, 'center');
+  txt(clockStr(), 470, 14, 6, clockColor(), 'end');
+  R(0,H-14,W,14,'#2a3a4a'); R(0,H-14,W,1,'#3a5a6a');
+  txt('벤치=사색(Power +55, 3시간)  ·  계단=휴게실로  ·  사계절·노을·밤하늘을 즐겨요', W/2, H-4, 6, '#a8cad8','center');
+}
+
+// ============================================================
 //  MAIN LOOP
 // ============================================================
 
@@ -3643,6 +4587,7 @@ function renderFab(){
     { sortY: 230, draw: drawKiosk },
     { sortY: 202, draw: drawLitho },
     { sortY: 194, draw: drawEtcher },
+    { sortY: 176, draw: drawQaBench },
     { sortY: 224, draw: drawCrate },
     { sortY: 213, draw: drawNpc },
     { sortY: state.py + 0.5, draw: drawPlayer },
@@ -3666,6 +4611,7 @@ function renderFab(){
   drawPrompt();
   drawMsg();
   drawMiniGame();
+  drawQA();      // QA defect-hunter overlay
   drawShop();    // shop modal overlays everything else
   drawAchv();
 
@@ -3700,6 +4646,9 @@ function frame(){
 
   if (state.scene === 'office') renderOffice();
   else if (state.scene === 'smock') renderSmock();
+  else if (state.scene === 'break') renderBreak();
+  else if (state.scene === 'rnd') renderRnd();
+  else if (state.scene === 'roof') renderRoof();
   else renderFab();
 
   // scene fade overlay (covers everything, both scenes)
