@@ -281,6 +281,10 @@ const state = {
   // global tick
   t: 0,
   won: false,
+  // ending
+  ending: null,          // null | report object while the ending screen is up
+  endingShown: false,    // ending only ever triggers once
+  collapseCount: 0,      // # of 02:00 auto-collapses (overwork) — for work-life grade
 };
 
 // ============================================================
@@ -332,6 +336,7 @@ function tickClock(){
   }
 }
 function autoCollapse(){
+  state.collapseCount++;
   speak('self', '😴 너무 늦었다... 다음날 아침', 150);
   rest();   // rest() resets the clock to morning and advances the day
 }
@@ -474,6 +479,12 @@ window.addEventListener('keydown', e => {
 
   // Lock all input during a scene fade
   if (state.fadeDir !== 0) return;
+
+  // Ending screen owns input — any of these resumes endless play
+  if (state.ending){
+    if (k === ' ' || k === 'enter' || k === 'r') closeEnding();
+    return;
+  }
 
   // Office scene has its own input handling
   if (state.scene === 'office'){
@@ -705,6 +716,8 @@ function rest(){
   }
   if (state.day === 3) unlock('DAY_3', '☀️ Day 3 도달!', 15);
   if (state.day === 7) unlock('DAY_7', '☀️ Day 7 도달!', 30);
+  // 1년차 결산 — Day 28에 도달하면 (기가팹보다 먼저면) 엔딩
+  if (state.day >= 28) triggerEnding('year1');
   const newSeason = getSeason();
   let extra = '';
   if (state.furniture.coffeeMachine) extra += ' ☕+1';
@@ -944,22 +957,107 @@ function checkFabLevel(){
     state.fabLevel = lv;
     const info = FAB_LEVELS[lv-1];
     unlock('FAB_LV'+lv, '🏭 ' + info.name + ' 승급!', 0);
-    speak('self', '🏭 팹 승급! ' + info.name, 180);
-    setTimeout(() => {
-      toast('🏭 FAB 등급 상승!<br>Lv.' + lv + '  ' + info.name +
-            '<br><small>출하 기본 단가 ' + info.base + ' Si' +
-            (lv===5 ? '<br>🎉 최고 등급 GIGAFAB 달성!' : '') + '</small>', 3200);
-    }, 200);
-    if (lv === 5 && !state.won){
-      state.won = true;
+    if (lv === 5){
+      triggerEnding('gigafab');
+    } else {
+      speak('self', '🏭 팹 승급! ' + info.name, 180);
       setTimeout(() => {
-        const stats = '<small>Day ' + state.day + ' / 누적 ' + state.lifetimeSi + ' Si' +
-                      '<br>Max combo x' + state.maxCombo + ' / Perfect ' + state.perfectTotal +
-                      '<br>R 키로 계속 플레이</small>';
-        toast('🎉 GIGAFAB 달성! 🎉<br>최고 등급 팹 완성<br>' + stats, 99999);
-      }, 3600);
+        toast('🏭 FAB 등급 상승!<br>Lv.' + lv + '  ' + info.name +
+              '<br><small>출하 기본 단가 ' + info.base + ' Si</small>', 3200);
+      }, 200);
     }
   }
+}
+
+// ============================================================
+//  ENDING  — management report card (기가팹 Lv5 OR Day 28, whichever first)
+// ============================================================
+function gradeScore(g){ return { S:5, A:4, B:3, C:2, D:1 }[g]; }
+function gradeColor(g){ return { S:'#ffd24a', A:C.grnHi, B:'#6aa8e0', C:C.badge, D:C.red }[g]; }
+function gradeHi(v, th){ return v>=th[0]?'S':v>=th[1]?'A':v>=th[2]?'B':v>=th[3]?'C':'D'; }
+function gradeLo(v, th){ return v<=th[0]?'S':v<=th[1]?'A':v<=th[2]?'B':v<=th[3]?'C':'D'; }
+
+function buildReport(reason){
+  const ships = Math.max(1, state.shipTotal);
+  const perfectRatio = state.perfectTotal / ships;
+  const scrapRatio = state.scrapTotal / ships;
+  const collapseRate = state.collapseCount / Math.max(1, state.day);
+
+  const axes = [
+    { key:'생산 규모', grade: gradeHi(state.lifetimeSi, [1500,800,400,150]),
+      detail: '누적 ' + state.lifetimeSi + ' Si' },
+    { key:'품질',     grade: gradeHi(perfectRatio, [0.5,0.35,0.2,0.08]),
+      detail: 'Perfect ' + state.perfectTotal + '/' + state.shipTotal + ' (' + Math.round(perfectRatio*100) + '%)' },
+    { key:'숙련도',   grade: gradeHi(state.maxCombo, [10,7,5,3]),
+      detail: '최고 콤보 x' + state.maxCombo },
+    { key:'효율',     grade: gradeLo(scrapRatio, [0.05,0.12,0.22,0.4]),
+      detail: 'Scrap ' + state.scrapTotal + '개 폐기' },
+    { key:'워라밸',   grade: gradeLo(collapseRate, [0.05,0.18,0.35,0.55]),
+      detail: '과로(자동취침) ' + state.collapseCount + '회' },
+    { key:'신뢰',     grade: gradeHi(state.questDone, [10,6,3,1]),
+      detail: '퀘스트 ' + state.questDone + '회 완료' },
+  ];
+  const avg = axes.reduce((s,a)=>s+gradeScore(a.grade),0) / axes.length;
+  const overall = avg>=4.5?'S' : avg>=3.7?'A' : avg>=2.8?'B' : avg>=1.8?'C' : 'D';
+  const baseTitle = { S:'전설의 팹 매니저', A:'베테랑 경영자', B:'성실한 라인장', C:'신입 엔지니어', D:'수습 사원' }[overall];
+  let title = baseTitle;
+  if (axes[4].grade === 'D') title = '워커홀릭 ' + baseTitle;          // 워라밸 D
+  else if (overall === 'S' && axes[1].grade === 'S') title = '품질의 거장';
+  else if (overall === 'S' && axes[0].grade === 'S') title = '양산왕';
+
+  return {
+    reason, axes, overall, title,
+    headline: reason==='gigafab' ? '국내 최대 기가팹 완공!' : '창업 1년차 결산 발표',
+    sub: reason==='gigafab' ? 'Lv.5 GIGAFAB 달성 · Day ' + state.day : 'Day 28 — 첫 해를 마치며',
+    krw: state.krw, achv: Object.keys(state.achv).length, fabLevel: state.fabLevel,
+  };
+}
+
+function triggerEnding(reason){
+  if (state.endingShown) return;
+  state.endingShown = true;
+  state.shopOpen = false;
+  state.officeShopOpen = false;
+  state.officeWork = null;
+  state.miniGame = null;
+  state.ending = buildReport(reason);
+}
+function closeEnding(){ state.ending = null; }   // resume endless play (won't retrigger)
+
+function drawEnding(){
+  const e = state.ending;
+  if (!e) return;
+  ctx.fillStyle = 'rgba(12,10,18,0.82)'; ctx.fillRect(0,0,W,H);
+  const mx=34, my=12, mw=412, mh=248;
+  R(mx-3,my-3,mw+6,mh+6,'#c89858');
+  R(mx,my,mw,mh,'#f4ecd4');
+  R(mx,my,mw,3,'#fff8e8'); R(mx,my+mh-3,mw,3,'#c8bca0');
+  // masthead + headline
+  txt('— CLEANROOM VALLEY TIMES —', mx+mw/2, my+15, 5, '#9a7850', 'center');
+  R(mx+12,my+19,mw-24,1,'#9a7850');
+  txt(e.headline, mx+mw/2, my+33, 8, '#2a1c10', 'center');
+  txt(e.sub, mx+mw/2, my+45, 5, '#7a5838', 'center');
+  R(mx+12,my+51,mw-24,1,'#c8bca0');
+  txt('📋 경영 성적표', mx+mw/2, my+65, 7, '#3a2818', 'center');
+  // axis rows
+  const rowY0=my+74, rowH=18;
+  for (let i=0;i<e.axes.length;i++){
+    const a=e.axes[i], ry=rowY0+i*rowH;
+    if (i%2===0){ R(mx+10, ry-2, mw-20, rowH-1, '#ece2c8'); }
+    R(mx+16, ry+4, 6, 6, gradeColor(a.grade));
+    txt(a.key, mx+30, ry+10, 6, '#2a1c10');
+    txt(a.detail, mx+112, ry+10, 5, '#7a5838');
+    txt(a.grade, mx+mw-20, ry+12, 9, gradeColor(a.grade), 'end');
+  }
+  // overall
+  const oy = rowY0 + e.axes.length*rowH + 6;
+  R(mx+12, oy, mw-24, 1, '#c8bca0');
+  txt('종합 등급', mx+30, oy+18, 7, '#3a2818');
+  txt('"' + e.title + '"', mx+30, oy+33, 7, '#a85820');
+  txt(e.overall, mx+mw-34, oy+30, 16, gradeColor(e.overall), 'end');
+  txt('KRW ' + e.krw.toLocaleString() + '  ·  업적 ' + e.achv + '개  ·  FAB Lv.' + e.fabLevel,
+      mx+mw/2, oy+46, 5, '#9a7850', 'center');
+  txt('R / Space — 계속 플레이 (엔드리스)', mx+mw/2, my+mh-9, 6, '#9a7850', 'center');
 }
 
 function addCombo(){
@@ -1077,6 +1175,7 @@ function tickRush(){
 function update(){
   state.t++;
   tickFade();
+  if (state.ending) return;   // freeze the world behind the ending screen
   tickClock();
   tickAchv();
   // expire messages (both scenes)
@@ -3608,6 +3707,9 @@ function frame(){
     ctx.fillStyle = 'rgba(10,8,16,' + state.fade + ')';
     ctx.fillRect(0,0,W,H);
   }
+
+  // ending report card (above everything)
+  drawEnding();
 
   requestAnimationFrame(frame);
 }
