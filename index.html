@@ -411,7 +411,7 @@ const OFFICE_STATIONS = [
 // gowning room (smock room) — hub between fab and office
 const SMOCK_TOP = 112, SMOCK_BOT = 226, SMOCK_LEFT = 28, SMOCK_RIGHT = 452;
 const SMOCK_STATIONS = [
-  { id:'changer',   x:198, y:118, w:84, h:48, prompt:'스목 착용/탈의', doorX:240, doorY:180 },
+  { id:'changer',   x:198, y:118, w:84, h:48, prompt:'smock 착용/탈의', doorX:240, doorY:180 },
   { id:'officedoor',x:30,  y:118, w:34, h:46, prompt:'사무실로',       doorX:50,  doorY:172 },
   { id:'fabdoor',   x:416, y:118, w:34, h:46, prompt:'팹으로',         doorX:432, doorY:172 },
 ];
@@ -3047,17 +3047,17 @@ function smockInteract(){
   if (s.id === 'changer'){
     toggleSmock();
   } else if (s.id === 'fabdoor'){
-    if (!state.smockOn){ showMsg('⚠ FAB 입장 불가 — 스목을 착용하세요'); return; }
+    if (!state.smockOn){ showMsg('⚠ FAB 입장 불가 — smock을 착용하세요'); return; }
     switchScene('fab');
   } else if (s.id === 'officedoor'){
-    if (state.smockOn){ showMsg('⚠ 사무실 입장 불가 — 스목을 벗으세요'); return; }
+    if (state.smockOn){ showMsg('⚠ 사무실 입장 불가 — smock을 벗으세요'); return; }
     switchScene('office');
   }
 }
 
 function toggleSmock(){
   state.smockOn = !state.smockOn;
-  speak('self', state.smockOn ? '🥼 스목 착용 완료' : '👔 평상복으로', 120);
+  speak('self', state.smockOn ? '🥼 smock 착용 완료' : '👔 평상복으로', 120);
 }
 
 function updateSmock(){
@@ -3095,11 +3095,11 @@ function updateSmock(){
   // dynamic changer prompt + locked-door hints
   const ns = nearestSmockStation();
   if (ns && ns.id === 'changer'){
-    state.prompt = { ...ns, prompt: state.smockOn ? '스목 벗기' : '스목 입기' };
+    state.prompt = { ...ns, prompt: state.smockOn ? 'smock 벗기' : 'smock 입기' };
   } else if (ns && ns.id === 'fabdoor' && !state.smockOn){
-    state.prompt = { ...ns, prompt: '팹 (스목 필요)' };
+    state.prompt = { ...ns, prompt: '팹 (smock 필요)' };
   } else if (ns && ns.id === 'officedoor' && state.smockOn){
-    state.prompt = { ...ns, prompt: '사무실 (스목 탈의)' };
+    state.prompt = { ...ns, prompt: '사무실 (smock 탈의)' };
   } else {
     state.prompt = ns;
   }
@@ -3249,7 +3249,7 @@ function drawSmockHud(){
   R(180,4,120,15,'#1a2438');
   R(180,4,120,1,'#3a5680');
   R(184,7,8,9, on ? '#eef1f6' : '#6a9cd0');   // little suit/shirt swatch
-  txt(on ? '스목 착용 (FAB OK)' : '평상복 (OFFICE OK)', 240, 14, 5,
+  txt(on ? 'smock 착용 (FAB OK)' : '평상복 (OFFICE OK)', 240, 14, 5,
       on ? '#a8e0f0' : '#f0c870', 'center');
 
   // day + clock (right)
@@ -3259,7 +3259,7 @@ function drawSmockHud(){
   // bottom hint
   R(0,H-14,W,14,'#2a3850');
   R(0,H-14,W,1,'#3a5680');
-  txt('가운데 락커=스목 착용/탈의  ·  좌:사무실(평상복)  우:팹(스목)', W/2, H-4, 6, '#9ab4cc', 'center');
+  txt('가운데 락커=smock 착용/탈의  ·  좌:사무실(평상복)  우:팹(smock)', W/2, H-4, 6, '#9ab4cc', 'center');
 }
 
 // ============================================================
