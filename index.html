@@ -316,11 +316,14 @@ const OFFICE_SHOP_ITEMS = [
 //  TIME OF DAY  — 1 real minute = 1 in-game hour
 //  Day starts at 06:00. If not rested by 02:00 → auto collapse.
 // ============================================================
+// real seconds per in-game hour (smaller = faster days). 10s/hr → a full
+// 06:00→02:00 day is ~3min20s. Tune this one number to change day length.
+const SEC_PER_GAME_HOUR = 10;
 function tickClock(){
   // pause during menus / transitions / win screen
   const officeModalOpen = state.officeShopOpen || (state.officeWork && (state.officeWork.open || state.officeWork.result));
   if (state.shopOpen || state.miniGame || officeModalOpen || state.fadeDir !== 0 || state.won) return;
-  state.hour += 1/3600;   // 60fps × 60s = 3600 frames per game-hour
+  state.hour += 1 / (60 * SEC_PER_GAME_HOUR);   // advance, assuming ~60fps
   if (state.hour >= 26){   // 02:00 next day
     autoCollapse();
   } else if (state.hour >= 22 && !state._nightWarned){
