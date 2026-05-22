@@ -198,6 +198,8 @@ const state = {
   carryQ: 0,              // 0=normal, 1=good, 2=perfect
   // resources
   silicon: 0,
+  lifetimeSi: 0,          // cumulative Si earned (drives fab level; never decreases)
+  fabLevel: 1,            // 1..5 — grows with lifetimeSi
   power: 100,
   maxPower: 100,
   temp: 22.1,
@@ -271,6 +273,11 @@ const state = {
   officeWork: null,       // active document session
   officeBuff: null,       // { shipMult, label } applied during fab day
   officeDoneToday: false, // one full session per day
+  // owned office furniture (KRW shop) — passive perks
+  furniture: { coffeeMachine:false, plant:false, aquarium:false, bookshelf:false },
+  officeShopOpen: false,
+  officeShopCursor: 0,
+  officeShopFlash: 0,
   // global tick
   t: 0,
   won: false,
@@ -284,12 +291,34 @@ const SEASON_KR = ['봄','여름','가을','겨울'];
 const SEASON_AB = ['SPR','SUM','FAL','WIN'];
 
 // ============================================================
+//  FAB LEVELS  — cumulative Si grows the fab; base ship price rises
+// ============================================================
+const FAB_LEVELS = [
+  { lv:1, name:'스타트업 팹', en:'STARTUP',  si:0,    base:10 },
+  { lv:2, name:'중소 팹',     en:'SMALL',    si:100,  base:13 },
+  { lv:3, name:'양산 팹',     en:'VOLUME',   si:300,  base:17 },
+  { lv:4, name:'대형 팹',     en:'MEGA',     si:700,  base:22 },
+  { lv:5, name:'기가팹',      en:'GIGAFAB',  si:1500, base:30 },
+];
+function fabInfo(){ return FAB_LEVELS[state.fabLevel-1]; }
+
+// ============================================================
+//  OFFICE FURNITURE SHOP  (spend KRW) — one-time passive perks
+// ============================================================
+const OFFICE_SHOP_ITEMS = [
+  { id:'coffeeMachine', name:'커피머신',  price:200, icon:'fCoffee',  desc:'매일 Coffee +1' },
+  { id:'plant',         name:'대형 화분',  price:150, icon:'fPlant',   desc:'Temp 안정화' },
+  { id:'aquarium',      name:'어항',       price:350, icon:'fAqua',    desc:'매일 보너스 +20 Si' },
+  { id:'bookshelf',     name:'기술 서적',  price:280, icon:'fBook',    desc:'캘리브 PERFECT 힌트' },
+];
+
+// ============================================================
 //  TIME OF DAY  — 1 real minute = 1 in-game hour
 //  Day starts at 06:00. If not rested by 02:00 → auto collapse.
 // ============================================================
 function tickClock(){
   // pause during menus / transitions / win screen
-  const officeModalOpen = state.officeWork && (state.officeWork.open || state.officeWork.result);
+  const officeModalOpen = state.officeShopOpen || (state.officeWork && (state.officeWork.open || state.officeWork.result));
   if (state.shopOpen || state.miniGame || officeModalOpen || state.fadeDir !== 0 || state.won) return;
   state.hour += 1/3600;   // 60fps × 60s = 3600 frames per game-hour
   if (state.hour >= 26){   // 02:00 next day
@@ -405,6 +434,7 @@ const SEASON_THEME = [
 const OFFICE_TOP = 112, OFFICE_BOT = 226, OFFICE_LEFT = 28, OFFICE_RIGHT = 452;
 const OFFICE_STATIONS = [
   { id:'desk',    x:186, y:120, w:108, h:48, prompt:'서류 처리',      doorX:240, doorY:180 },
+  { id:'shop',    x:138, y:140, w:28,  h:34, prompt:'가구 상점 (B)',  doorX:152, doorY:182 },
   { id:'fabdoor', x:34,  y:118, w:34,  h:46, prompt:'탈의실로 나가기', doorX:51,  doorY:172 },
 ];
 
@@ -603,23 +633,13 @@ function tryInteract(){
   else if (s.id === 'crate'){
     if (state.carry !== 'etched'){ showMsg('완성품(etched) 필요'); return; }
     const reward = computeShipReward(state.carryQ);
-    state.silicon += reward;
+    gainSi(reward);
     onShipped(state.carryQ);
     state.carry = null;
     state.carryQ = 0;
     speak('self', '+' + reward + ' Si !!', 110);
     state.temp += (Math.random()-0.5) * 0.6;
     state.temp = Math.max(20, Math.min(25, state.temp));
-    if (state.silicon >= 100 && !state.won){
-      state.won = true;
-      setTimeout(() => {
-        const stats = '<small>Day ' + state.day + ' / Max combo x' + state.maxCombo +
-                      '<br>Perfect ' + state.perfectTotal + ' / Scrap ' + state.scrapTotal +
-                      '<br>Quest 완료 ' + state.questDone + '회' +
-                      '<br>R 키로 새 일 시작</small>';
-        toast('🎉 FAB COMPLETE! 🎉<br>Yield: 98%<br>' + stats, 99999);
-      }, 400);
-    }
   }
   else if (s.id === 'npc'){
     if (state.quest){
@@ -672,24 +692,24 @@ function rest(){
   // refill basic consumables up to 5
   if (state.inventory.photoresist < 5) state.inventory.photoresist = 5;
   if (state.inventory.etchant < 5) state.inventory.etchant = 5;
+  // furniture daily perks
+  if (state.furniture.coffeeMachine){ state.inventory.coffee += 1; }
+  if (state.furniture.aquarium){ gainSi(20); }
+  // clear the GIGAFAB win banner if it's up, but keep all progress (it's an endless title)
   if (state.won){
-    // reset stats but KEEP upgrades & inventory (player earned them)
     state.won = false;
-    state.silicon = 0;
-    state.shipTotal = 0;
-    state.perfectTotal = 0;
-    state.maxCombo = 0;
-    state.questDone = 0;
-    state.achv = {};
     document.getElementById('toast').classList.remove('show');
   }
   if (state.day === 3) unlock('DAY_3', '☀️ Day 3 도달!', 15);
   if (state.day === 7) unlock('DAY_7', '☀️ Day 7 도달!', 30);
   const newSeason = getSeason();
+  let extra = '';
+  if (state.furniture.coffeeMachine) extra += ' ☕+1';
+  if (state.furniture.aquarium) extra += ' 🐠+20Si';
   if (newSeason !== prevSeason){
-    speak('self', SEASON_KR[newSeason] + ' 시즌 시작!', 130);
+    speak('self', SEASON_KR[newSeason] + ' 시즌 시작!' + extra, 140);
   } else {
-    speak('self', 'Day ' + state.day + ' — 보급 완료!', 100);
+    speak('self', 'Day ' + state.day + ' — 보급 완료!' + extra, 110);
   }
 }
 
@@ -901,10 +921,42 @@ function qualityMult(q){
 }
 
 function computeShipReward(q){
-  const base = 10;
+  const base = fabInfo().base;
   const rushMult = state.rush ? 2 : 1;
   const officeMult = (state.officeBuff && state.officeBuff.shipMult) ? state.officeBuff.shipMult : 1;
   return Math.round(base * qualityMult(q) * comboMult() * rushMult * officeMult);
+}
+
+// central Si gain — also accrues lifetime total and checks fab level-up
+function gainSi(n){
+  state.silicon += n;
+  state.lifetimeSi += n;
+  checkFabLevel();
+}
+
+function checkFabLevel(){
+  let lv = 1;
+  for (const t of FAB_LEVELS){ if (state.lifetimeSi >= t.si) lv = t.lv; }
+  if (lv > state.fabLevel){
+    state.fabLevel = lv;
+    const info = FAB_LEVELS[lv-1];
+    unlock('FAB_LV'+lv, '🏭 ' + info.name + ' 승급!', 0);
+    speak('self', '🏭 팹 승급! ' + info.name, 180);
+    setTimeout(() => {
+      toast('🏭 FAB 등급 상승!<br>Lv.' + lv + '  ' + info.name +
+            '<br><small>출하 기본 단가 ' + info.base + ' Si' +
+            (lv===5 ? '<br>🎉 최고 등급 GIGAFAB 달성!' : '') + '</small>', 3200);
+    }, 200);
+    if (lv === 5 && !state.won){
+      state.won = true;
+      setTimeout(() => {
+        const stats = '<small>Day ' + state.day + ' / 누적 ' + state.lifetimeSi + ' Si' +
+                      '<br>Max combo x' + state.maxCombo + ' / Perfect ' + state.perfectTotal +
+                      '<br>R 키로 계속 플레이</small>';
+        toast('🎉 GIGAFAB 달성! 🎉<br>최고 등급 팹 완성<br>' + stats, 99999);
+      }, 3600);
+    }
+  }
 }
 
 function addCombo(){
@@ -933,7 +985,7 @@ function onShipped(q){
   if (state.rush){
     state.rush.shipped++;
     if (state.rush.shipped >= state.rush.target){
-      state.silicon += 30;
+      gainSi(30);
       unlock('RUSH_HERO', '🚨 Rush 성공! +30 보너스', 0);
       state.rush = null;
     }
@@ -954,7 +1006,7 @@ function onShipped(q){
       advanced = true;
     }
     if (advanced && qst.progress >= qst.target){
-      state.silicon += qst.reward;
+      gainSi(qst.reward);
       state.questDone++;
       speak('npc', '퀘스트 완료! +' + qst.reward + ' Si', 180);
       newQuest();
@@ -980,7 +1032,7 @@ function unlock(id, text, bonus){
   if (state.achv[id]) return;
   state.achv[id] = true;
   state.achvQ.push({ text, until: state.t + 200, born: state.t });
-  if (bonus) state.silicon += bonus;
+  if (bonus) gainSi(bonus);
 }
 
 function tickAchv(){
@@ -1061,7 +1113,7 @@ function update(){
     ny = Math.max(FLOOR_TOP, Math.min(FLOOR_BOT, ny));
     // collision with stations (feet must stay below their bottoms or to side)
     for (const s of STATIONS){
-      if (s.id === 'npc' || s.id === 'crate' || s.id === 'exit') continue;
+      if (s.id === 'npc' || s.id === 'crate' || s.id === 'exit' || s.id === 'shop') continue;
       const sx0=s.x, sx1=s.x+s.w, sy0=s.y, sy1=s.y+s.h;
       // expand a bit for visual collision (player width ~ 8)
       if (nx > sx0 - 4 && nx < sx1 + 4 && ny > sy0 - 2 && ny < sy1 + 2){
@@ -1111,11 +1163,14 @@ function update(){
 
   // resource drift
   if (state.t % 90 === 0){
-    state.temp += (Math.random()-0.5) * 0.2;
+    const drift = state.furniture.plant ? 0.08 : 0.2;
+    state.temp += (Math.random()-0.5) * drift;
+    if (state.furniture.plant){ state.temp += (22.0 - state.temp) * 0.06; } // gentle pull to 22
     state.temp = Math.max(20.5, Math.min(24.5, state.temp));
   }
   if ((state.lithoBusy > 0 || state.etchBusy > 0) && state.t % 30 === 0){
-    state.temp = Math.min(24.5, state.temp + 0.05);
+    const rise = state.furniture.plant ? 0.03 : 0.05;
+    state.temp = Math.min(24.5, state.temp + rise);
   }
 
   // expire messages
@@ -1831,57 +1886,63 @@ function drawHud(){
   R(2,19,W-4,1,'#2a1c0c');
 
   // Stat 1: Silicon
-  R(8,5,100,13,'#4a2c18');
-  R(8,5,100,1,C.woodHi);
-  R(8,17,100,1,'#2a1810');
+  R(8,5,72,13,'#4a2c18');
+  R(8,5,72,1,C.woodHi);
+  R(8,17,72,1,'#2a1810');
   // silicon gem
   R(13,7,4,1,C.si); R(12,8,6,1,C.siMid);
   R(11,9,8,3,C.siHi); R(12,12,6,2,C.siMid);
   R(13,14,4,1,C.si); R(13,9,2,2,C.siXHi);
-  txt('Si x' + state.silicon, 22, 14, 6, C.parchment);
+  txt('Si ' + state.silicon, 22, 14, 6, C.parchment);
 
   // Stat 2: Power
-  R(116,5,100,13,'#4a2c18');
-  R(116,5,100,1,C.woodHi);
-  R(116,17,100,1,'#2a1810');
+  R(84,5,104,13,'#4a2c18');
+  R(84,5,104,1,C.woodHi);
+  R(84,17,104,1,'#2a1810');
   // bolt
-  R(123,7,2,2,C.badge); R(121,9,4,1,C.badge);
-  R(122,10,3,1,'#fce078'); R(121,11,4,1,C.badge);
-  R(122,12,2,3,C.badge); P(123,10,C.parchment);
+  R(91,7,2,2,C.badge); R(89,9,4,1,C.badge);
+  R(90,10,3,1,'#fce078'); R(89,11,4,1,C.badge);
+  R(90,12,2,3,C.badge); P(91,10,C.parchment);
   const pctPwr = Math.round((state.power / state.maxPower) * 100);
-  txt('PWR ' + pctPwr + '%', 130, 14, 6, C.parchment);
+  txt('PWR ' + pctPwr + '%', 98, 14, 6, C.parchment);
   // mini bar
-  R(178,9,32,5,C.woodDk);
+  R(152,9,34,5,C.woodDk);
   const pratio = Math.max(0, Math.min(1, state.power / state.maxPower));
-  const pfill = (pratio * 28) | 0;
+  const pfill = (pratio * 30) | 0;
   const pcol = pctPwr < 25 ? C.red : (pctPwr < 50 ? C.badge : C.grnHi);
-  R(179,10, pfill, 3, pcol);
-  // battery upgrade tick marks
+  R(153,10, pfill, 3, pcol);
   if (state.upgrades.battery > 0){
-    for (let i=0; i<state.upgrades.battery; i++){
-      R(208 - i*2, 7, 1, 2, C.grnXHi);
-    }
+    for (let i=0; i<state.upgrades.battery; i++){ R(184 - i*2, 7, 1, 2, C.grnXHi); }
   }
 
   // Stat 3: Temp
-  R(224,5,116,13,'#4a2c18');
-  R(224,5,116,1,C.woodHi);
-  R(224,17,116,1,'#2a1810');
+  R(192,5,84,13,'#4a2c18');
+  R(192,5,84,1,C.woodHi);
+  R(192,17,84,1,'#2a1810');
   // thermometer
-  R(230,7,2,6,'#e8e2d0'); R(229,13,4,2,C.red);
-  R(230,8,1,5,C.red);
-  txt('TEMP ' + state.temp.toFixed(1) + 'C', 238, 14, 6, C.parchment);
+  R(198,7,2,6,'#e8e2d0'); R(197,13,4,2,C.red);
+  R(198,8,1,5,C.red);
+  txt('TEMP ' + state.temp.toFixed(1) + 'C', 206, 14, 6, C.parchment);
 
-  // Stat 4: Day
-  R(348,5,124,13,'#4a2c18');
-  R(348,5,124,1,C.woodHi);
-  R(348,17,124,1,'#2a1810');
+  // Stat 4: FAB level (highlighted)
+  R(280,5,78,13,'#3a2410');
+  R(280,5,78,1,C.badge);
+  R(280,17,78,1,'#2a1810');
+  // tiny factory glyph (3 stacks)
+  R(285,12,11,4,C.parchMid); R(286,9,2,3,C.parchMid); R(289,8,2,4,C.parchMid); R(292,9,2,3,C.parchMid);
+  P(286,7,'#c8bca0'); P(292,7,'#c8bca0');
+  txt('Lv.' + state.fabLevel + ' ' + fabInfo().en, 300, 14, 6, C.badge);
+
+  // Stat 5: Day + clock
+  R(362,5,110,13,'#4a2c18');
+  R(362,5,110,1,C.woodHi);
+  R(362,17,110,1,'#2a1810');
   // calendar
-  R(352,7,9,9,C.red); R(352,7,9,3,'#7a2818');
-  P(353,8,C.parchment); P(359,8,C.parchment);
-  R(353,11,7,4,C.parchment);
-  R(354,12,2,1,C.red); R(357,12,2,1,C.red);
-  txt('D' + state.day + ' ' + SEASON_AB[getSeason()], 364, 14, 6, C.parchment);
+  R(366,7,9,9,C.red); R(366,7,9,3,'#7a2818');
+  P(367,8,C.parchment); P(373,8,C.parchment);
+  R(367,11,7,4,C.parchment);
+  R(368,12,2,1,C.red); R(371,12,2,1,C.red);
+  txt('D' + state.day + ' ' + SEASON_AB[getSeason()], 378, 14, 6, C.parchment);
   txt(clockStr(), 468, 14, 6, clockColor(), 'end');
 
   // MINIMAP
@@ -1891,7 +1952,7 @@ function drawHud(){
   R(388,28,2,58,C.woodHi);
   R(470,28,2,58,C.woodDk);
   R(390,30,80,8,C.woodMid);
-  txt('FAB-4 MAP', 430, 36, 5, C.parchment, 'center');
+  txt('Lv.' + state.fabLevel + ' ' + fabInfo().en, 430, 36, 5, C.badge, 'center');
   // map area
   R(391,38,78,45,'#243046');
   for (let yy=38;yy<83;yy+=2)
@@ -1916,6 +1977,14 @@ function drawHud(){
   const nmx = 394 + (319/W)*72;
   const nmy = 41 + ((196-78)/160)*38;
   R(nmx|0, nmy|0, 2, 2, C.laser);
+  // fab-level progress bar (lifetime Si toward next level)
+  const next = FAB_LEVELS[state.fabLevel] || null;
+  let frac = 1;
+  if (next) frac = Math.max(0, Math.min(1, (state.lifetimeSi - fabInfo().si) / (next.si - fabInfo().si)));
+  R(393,79,74,3,'#15100a');
+  R(393,79, Math.round(74*frac), 3, next ? C.grnHi : C.badge);
+  if (next) txt('next ' + next.si, 466, 78, 4, C.parchMid, 'end');
+  else txt('MAX', 466, 78, 4, C.badge, 'end');
 
   // BOTTOM INVENTORY
   R(80,238,320,30,C.wood);
@@ -2172,6 +2241,24 @@ function drawMiniGame(){
   const mx = bx + m.pos * bw;
   R(mx-1, by-3, 3, bh+6, C.parchment);
   R(mx, by-3, 1, bh+6, C.black);
+
+  // 기술 서적(책장) 힌트: PERFECT 존을 강조하고 마커가 들어오면 NOW! 표시
+  if (state.furniture.bookshelf && !m.result){
+    const pad = 0.025 * state.upgrades.perfect;
+    const pMin = 0.45 - pad, pMax = 0.55 + pad;
+    // glowing target band
+    const pulse = 0.5 + 0.5*Math.abs(Math.sin(state.t*0.2));
+    ctx.globalAlpha = 0.35 + 0.35*pulse;
+    R(bx + Math.round(bw*pMin), by-2, Math.round(bw*(pMax-pMin)), bh+4, C.grnXHi);
+    ctx.globalAlpha = 1;
+    // downward arrow over the perfect center
+    const cxh = bx + bw*0.5;
+    R(cxh-1, by-9, 2, 3, C.grnHi);
+    R(cxh-2, by-7, 4, 1, C.grnHi);
+    if (m.pos > pMin && m.pos < pMax){
+      txt('NOW!', W/2, by-12, 7, C.grnXHi, 'center');
+    }
+  }
 
   // hint / result
   if (m.result){
@@ -2495,7 +2582,15 @@ function nearestOfficeStation(){
 
 function handleOfficeKey(k){
   const w = state.officeWork;
-  // modal is showing (open session or result screen)
+  // furniture shop modal
+  if (state.officeShopOpen){
+    if (k === 'b' || k === 'escape') closeOfficeShop();
+    else if (k === 'arrowup' || k === 'w') officeShopMove(-1);
+    else if (k === 'arrowdown' || k === 's') officeShopMove(1);
+    else if (k === 'enter' || k === ' ') officeShopBuy();
+    return;
+  }
+  // document session modal (open session or result screen)
   if (w && (w.open || w.result)){
     if (w.result){
       if (k === ' ' || k === 'enter' || k === 'escape') state.officeWork = null;
@@ -2515,17 +2610,39 @@ function handleOfficeKey(k){
   // roaming the office (also when a session is paused)
   if (k === ' ' || k === 'e') officeInteract();
   if (k === 'r') rest();
+  if (k === 'b') openOfficeShop();
+}
+
+function openOfficeShop(){ state.officeShopOpen = true; state.officeShopCursor = 0; }
+function closeOfficeShop(){ state.officeShopOpen = false; state.officeShopFlash = 0; }
+function officeShopMove(d){
+  let n = state.officeShopCursor + d;
+  if (n < 0) n = OFFICE_SHOP_ITEMS.length - 1;
+  if (n >= OFFICE_SHOP_ITEMS.length) n = 0;
+  state.officeShopCursor = n;
+}
+function officeShopBuy(){
+  const item = OFFICE_SHOP_ITEMS[state.officeShopCursor];
+  if (state.furniture[item.id]){ speak('self','이미 보유 중', 70); return; }
+  if (state.krw < item.price){ speak('self','KRW 부족!', 70); return; }
+  state.krw -= item.price;
+  state.furniture[item.id] = true;
+  state.officeShopFlash = 30;
+  speak('self', item.name + ' 설치 완료!', 120);
+  unlock('FIRST_FURNITURE', '🛋️ 첫 가구 설치!', 0);
+  if (OFFICE_SHOP_ITEMS.every(it => state.furniture[it.id])) unlock('FULL_OFFICE', '🏢 사무실 풀세팅!', 0);
 }
 
 function officeInteract(){
   const s = nearestOfficeStation();
   if (!s) return;
   if (s.id === 'desk') startOfficeWork();
+  else if (s.id === 'shop') openOfficeShop();
   else if (s.id === 'fabdoor') switchScene('smock');
 }
 
 function updateOffice(){
-  const modalOpen = state.officeWork && (state.officeWork.open || state.officeWork.result);
+  const modalOpen = state.officeShopOpen || (state.officeWork && (state.officeWork.open || state.officeWork.result));
   // movement (locked only while the document modal is open, or during fade)
   let vx=0, vy=0;
   if (!modalOpen && state.fadeDir === 0){
@@ -2647,14 +2764,19 @@ function renderOffice(){
   drawOfficeWall(th, sea);
   drawOfficeFloor(th);
 
-  // depth-sorted entities
+  // depth-sorted entities (owned furniture appears in the room)
   const ents = [
     { sortY: 168, draw: () => drawDesk(th) },
     { sortY: 164, draw: () => drawFabDoor(th) },
+    { sortY: 172, draw: () => drawCatalogKiosk(th) },
     { sortY: 214, draw: () => drawOfficePlant(th) },
     { sortY: 150, draw: () => drawWaterCooler(th) },
     { sortY: state.oy + 0.5, draw: drawPlayer },
   ];
+  if (state.furniture.bookshelf)     ents.push({ sortY: 150, draw: drawFurnBookshelf });
+  if (state.furniture.aquarium)      ents.push({ sortY: 158, draw: drawFurnAquarium });
+  if (state.furniture.coffeeMachine) ents.push({ sortY: 156, draw: drawFurnCoffeeMachine });
+  if (state.furniture.plant)         ents.push({ sortY: 210, draw: () => drawFurnBigPlant(th) });
   ents.sort((a,b)=>a.sortY-b.sortY);
   for (const e of ents) e.draw();
 
@@ -2670,7 +2792,146 @@ function renderOffice(){
   drawPrompt();
   drawMsg();
   drawOfficeWork(th);
+  drawOfficeShop();
   drawAchv();
+}
+
+// ---- owned furniture sprites ----
+function drawCatalogKiosk(th){
+  // an easel-style furniture catalog stand, so the shop is visibly present
+  ctx.save(); ctx.translate(138, 138);
+  // stand legs
+  R(4,30,2,8,'#5a4632'); R(22,30,2,8,'#5a4632'); R(6,36,16,2,'#4a3826');
+  // board
+  R(0,0,28,32,'#6a4a30');
+  R(0,0,28,2,'#8a6440'); R(0,30,28,2,'#4a3220');
+  R(2,2,24,28,'#f4ecd4');
+  // header
+  R(2,2,24,7,th.accent);
+  txt('FURNITURE', 14, 8, 4, '#fff8e8', 'center');
+  // thumbnail grid (4 mini items)
+  const cols=['#3a3344','#48a860','#7ec8e0','#c44830'];
+  for (let i=0;i<4;i++){
+    const tx=4+(i%2)*12, ty=11+((i/2)|0)*9;
+    R(tx,ty,10,7,'#e6dcc4');
+    R(tx+2,ty+1,6,5,cols[i]);
+  }
+  // little price tag
+  R(3,28,22,3,th.accent);
+  ctx.restore();
+}
+function drawFurnBookshelf(){
+  ctx.save(); ctx.translate(96, 116);
+  R(0,0,30,38,'#6a4a30'); R(0,0,30,2,'#8a6440'); R(0,36,30,2,'#4a3220');
+  R(0,0,2,38,'#8a6440'); R(28,0,2,38,'#4a3220');
+  for (let s=0;s<3;s++){
+    const sy=4+s*12;
+    R(2,sy,26,1,'#4a3220');
+    // books
+    const cols=['#c44830','#3a8c5c','#3878b0','#e0a020','#8a78a0','#c8a838'];
+    for (let b=0;b<7;b++){ R(3+b*3.6, sy+1, 3, 9, cols[(s*7+b)%cols.length]); }
+  }
+  ctx.restore();
+}
+function drawFurnAquarium(){
+  ctx.save(); ctx.translate(316, 130);
+  // stand
+  R(2,26,26,6,'#5a4632'); R(4,32,3,5,'#4a3826'); R(23,32,3,5,'#4a3826');
+  // tank
+  R(0,4,30,22,'#bfe6f0'); R(2,6,26,18,'#7ec8e0'); R(2,6,26,2,'#a8e0f0');
+  R(0,4,30,2,'#9ab4bc'); R(0,24,30,2,'#6a98a8');
+  // water line + fish
+  R(2,8,26,1,'#bfe8f4');
+  R(8,14,4,2,'#e07828'); P(11,14,'#fff2c8');     // orange fish
+  R(18,18,4,2,'#e0a020'); P(21,18,'#fff2c8');
+  // bubbles
+  if ((state.t>>3)&1){ P(6,12,'#ffffff'); P(22,10,'#ffffff'); }
+  // plants
+  R(5,18,2,6,'#3a8c5c'); R(24,16,2,8,'#3a8c5c');
+  ctx.restore();
+}
+function drawFurnCoffeeMachine(){
+  ctx.save(); ctx.translate(356, 132);
+  R(0,0,18,24,'#3a3344'); R(0,0,18,2,'#585068'); R(0,22,18,2,'#222');
+  R(2,3,14,8,'#1a2030'); R(3,4,12,6,'#2a4860');  // display
+  R(4,5,9,1,'#88c0e0'); R(4,7,6,1,'#a8d0a0');
+  R(5,14,8,5,'#222');    // spout area
+  R(7,16,4,3,'#5a3c20'); // cup
+  R(7,16,4,1,'#7a5430');
+  if ((state.t>>4)&1){ P(8,13,'#c8bca0'); P(10,12,'#c8bca0'); } // steam
+  R(2,20,14,2,'#585068');
+  ctx.restore();
+}
+function drawFurnBigPlant(th){
+  ctx.save(); ctx.translate(420, 184);
+  R(2,20,16,12,th.plantPot); R(2,20,16,2,'#d89868'); R(2,30,16,2,'#8a5838');
+  R(8,6,4,14,'#5a7838');
+  for (const [bx,by,r] of [[0,2,8],[10,0,9],[4,6,7],[12,8,7],[-2,10,6]]){
+    R(bx,by,r,r-1,th.plant); R(bx+1,by,3,2,'#74c490');
+  }
+  ctx.restore();
+}
+
+function drawFurnIcon(type, cx, cy){
+  switch(type){
+    case 'fCoffee':
+      R(cx-5,cy-5,10,10,'#3a3344'); R(cx-3,cy-3,6,4,'#2a4860'); R(cx-2,cy+2,4,3,'#5a3c20');
+      if((state.t>>4)&1)P(cx,cy-7,'#c8bca0'); break;
+    case 'fPlant':
+      R(cx-3,cy+2,6,5,'#c87858'); R(cx-1,cy-5,2,7,'#5a7838');
+      R(cx-4,cy-5,4,4,'#48a860'); R(cx,cy-6,4,4,'#48a860'); break;
+    case 'fAqua':
+      R(cx-6,cy-4,12,9,'#7ec8e0'); R(cx-6,cy-4,12,1,'#a8e0f0');
+      R(cx-3,cy,3,2,'#e07828'); R(cx+1,cy-2,3,2,'#e0a020'); break;
+    case 'fBook':
+      R(cx-5,cy-5,10,11,'#6a4a30');
+      R(cx-4,cy-4,2,9,'#c44830'); R(cx-1,cy-4,2,9,'#3a8c5c'); R(cx+2,cy-4,2,9,'#3878b0'); break;
+  }
+}
+
+function drawOfficeShop(){
+  if (!state.officeShopOpen) return;
+  ctx.fillStyle='rgba(20,16,26,0.72)'; ctx.fillRect(0,0,W,H);
+  const mw=300, mh=190, mx=(W-mw)/2, my=(H-mh)/2;
+  R(mx-3,my-3,mw+6,mh+6,'#c89858');
+  R(mx,my,mw,mh,'#3a2818');
+  R(mx,my,mw,2,'#6c4828'); R(mx,my+mh-2,mw,2,C.woodDk);
+  R(mx+4,my+4,mw-8,mh-8,'#5a3c20'); R(mx+4,my+4,mw-8,1,'#7a5430');
+  // title
+  R(mx+8,my+8,mw-16,22,'#3a2818'); R(mx+8,my+8,mw-16,1,'#6c4828');
+  txt('🛋️  OFFICE FURNITURE', mx+mw/2, my+22, 8, C.parchment, 'center');
+  // KRW
+  txt('KRW ' + state.krw.toLocaleString(), mx+mw-14, my+44, 7, C.badge, 'end');
+
+  const rowY0 = my+52, rowH = 30;
+  for (let i=0;i<OFFICE_SHOP_ITEMS.length;i++){
+    const it = OFFICE_SHOP_ITEMS[i];
+    const ry = rowY0 + i*rowH;
+    const sel = i === state.officeShopCursor;
+    const owned = state.furniture[it.id];
+    if (sel){
+      R(mx+10, ry-2, mw-20, rowH-4, '#4a2c18');
+      R(mx+10, ry-2, mw-20, 1, C.woodHi);
+      txt('▶', mx+16, ry+14, 8, C.badge);
+      if (state.officeShopFlash > 0){
+        ctx.fillStyle = state.officeShopFlash>15?'rgba(168,240,192,0.5)':'rgba(168,240,192,0.2)';
+        ctx.fillRect(mx+10, ry-2, mw-20, rowH-4); state.officeShopFlash--;
+      }
+    }
+    drawFurnIcon(it.icon, mx+34, ry+12);
+    txt(it.name, mx+50, ry+9, 7, C.parchment);
+    txt(it.desc, mx+50, ry+20, 5, C.parchMid);
+    if (owned){
+      txt('보유 ✓', mx+mw-16, ry+13, 6, C.grnHi, 'end');
+    } else {
+      txt(it.price.toLocaleString()+' ₩', mx+mw-16, ry+13, 6,
+          state.krw>=it.price?C.grnHi:C.red, 'end');
+    }
+  }
+  // footer
+  const fy=my+mh-20;
+  R(mx+8,fy,mw-16,14,C.woodDk);
+  txt('↑↓ 선택   Enter 구매   B/Esc 닫기', mx+mw/2, fy+10, 6, C.parchMid, 'center');
 }
 
 function drawOfficeWall(th, sea){
@@ -2916,7 +3177,7 @@ function drawOfficeHud(th, sea){
   // bottom hint strip
   R(0,H-14,W,14,'#3a2818');
   R(0,H-14,W,1,'#6c4828');
-  txt('이동 WASD  ·  Space 책상=업무 / 문=탈의실  ·  계절은 휴식(R)마다 변함', W/2, H-4, 6, C.parchMid, 'center');
+  txt('이동 WASD  ·  Space 책상=업무 / 문=탈의실  ·  B 가구상점  ·  R 휴식', W/2, H-4, 6, C.parchMid, 'center');
 }
 
 function drawOfficeWork(th){
