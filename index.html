@@ -207,6 +207,7 @@ const state = {
   temp: 22.1,
   day: 1,
   hour: 6,                // time of day, 6.0 = 06:00; 1 real min = 1 game hour
+  weather: 'clear',       // 'clear' | 'rain' | 'snow' — rolled each morning
   // machines
   lithoBusy: 0,    // remaining frames
   etchBusy: 0,
@@ -251,6 +252,7 @@ const state = {
     coffee: 1,            // start with one free coffee
     wrench: 0,
     mask: 0,
+    ore: 0,               // mined silicon ore (craft into wafers)
   },
   // permanent upgrades (purchased from shop)
   upgrades: {
@@ -299,6 +301,10 @@ const state = {
   hx: 240, hy: 190,       // hallway player position
   lx: 240, ly: 190,       // lobby player position
   gx: 90,  gy: 200,       // front garden player position
+  mx2: 240, my2: 200,     // mine player position (mx/my are taken by canvas math elsewhere conceptually)
+  mining: 0,              // mining swing busy timer
+  crafting: 0,            // crafting box busy timer
+  oreVein: 100,           // remaining ore richness in the current vein (regenerates)
   research: { done:{}, active:null },   // active = { id, daysLeft }
   rndMenuOpen: false,
   rndCursor: 0,
@@ -369,6 +375,15 @@ function clockStr(){
   let h = Math.floor(state.hour) % 24;
   const m = Math.floor((state.hour - Math.floor(state.hour)) * 60);
   return (h<10?'0':'') + h + ':' + (m<10?'0':'') + m;
+}
+// roll the day's weather: winter brings snow, other seasons bring rain
+function rollWeather(){
+  const r = Math.random();
+  if (getSeason() === 3) state.weather = r < 0.55 ? 'snow' : 'clear';
+  else                   state.weather = r < 0.35 ? 'rain' : 'clear';
+}
+function weatherStr(){
+  return state.weather === 'rain' ? '🌧 비' : state.weather === 'snow' ? '❄ 눈' : '☀ 맑음';
 }
 // Day/night ambient tint keyframes (hour → rgb + alpha overlay)
 const TINT_KEYS = [
@@ -475,12 +490,13 @@ const OFFICE_STATIONS = [
   { id:'npc',      x:348, y:176, w:14,  h:26, prompt:'수빈과 대화',     doorX:348, doorY:192 },
 ];
 
-// gowning room (smock room) — hub between fab and office
+// gowning room (smock room) — hub between fab and office; now also wafer crafting (airlock)
 const SMOCK_TOP = 112, SMOCK_BOT = 226, SMOCK_LEFT = 28, SMOCK_RIGHT = 452;
 const SMOCK_STATIONS = [
   { id:'changer',   x:198, y:118, w:84, h:48, prompt:'smock 착용/탈의', doorX:240, doorY:180 },
   { id:'officedoor',x:30,  y:118, w:34, h:46, prompt:'사무실로',       doorX:50,  doorY:172 },
   { id:'fabdoor',   x:416, y:118, w:34, h:46, prompt:'팹으로',         doorX:432, doorY:172 },
+  { id:'craftbox',  x:310, y:118, w:68, h:42, prompt:'웨이퍼 제작',     doorX:344, doorY:174 },
   { id:'npc',       x:120, y:172, w:14, h:26, prompt:'광수와 대화',     doorX:120, doorY:188 },
 ];
 
@@ -529,7 +545,16 @@ const GARDEN_TOP = 152, GARDEN_BOT = 226, GARDEN_LEFT = 28, GARDEN_RIGHT = 452;
 const GARDEN_STATIONS = [
   { id:'lobbydoor',x:34, y:120, w:48, h:54, prompt:'건물 안으로', doorX:58,  doorY:200 },
   { id:'gbench',   x:300,y:182, w:80, h:20, prompt:'벤치에서 쉬기', doorX:340, doorY:210 },
+  { id:'minedoor', x:414,y:148, w:42, h:74, prompt:'채석장 갱도로', doorX:432, doorY:208 },
 ];
+
+// silicon mine (광산) — outdoor quarry off the garden; mine ore here, craft in the gowning room
+const MINE_TOP = 150, MINE_BOT = 226, MINE_LEFT = 28, MINE_RIGHT = 452;
+const MINE_STATIONS = [
+  { id:'vein',       x:60,  y:150, w:104, h:40, prompt:'채굴 (실리콘 광맥)', doorX:112, doorY:202 },
+  { id:'gardendoor', x:416, y:120, w:36,  h:54, prompt:'밖으로 (정원)',      doorX:434, doorY:200 },
+];
+const ORE_PER_WAFER = 3;   // ore needed to craft one silicon wafer
 
 // R&D research projects — invest Si, complete after N days, permanent effect
 const RND_PROJECTS = [
@@ -627,6 +652,8 @@ window.addEventListener('keydown', e => {
   if (state.scene === 'lobby'){ handleLobbyKey(k); return; }
   // Front garden input
   if (state.scene === 'garden'){ handleGardenKey(k); return; }
+  // Silicon mine input
+  if (state.scene === 'mine'){ handleMineKey(k); return; }
 
   // Shop modal swallows most input
   if (state.shopOpen){
@@ -748,8 +775,12 @@ function doSceneSwitch(target){
     else { state.lx = 70; state.ly = 178; state.pdir = 'right'; }
     speak('self', '정문 로비', 110);
   } else if (target === 'garden'){
-    state.gx = 116; state.gy = 198; state.pdir = 'right';
+    if (from === 'mine'){ state.gx = 410; state.gy = 206; state.pdir = 'left'; }
+    else { state.gx = 116; state.gy = 198; state.pdir = 'right'; }
     speak('self', SEASON_KR[getSeason()] + ' 정원', 130);
+  } else if (target === 'mine'){
+    state.mx2 = 400; state.my2 = 196; state.pdir = 'left';
+    speak('self', '실리콘 채석장', 110);
   }
 }
 function tickFade(){
@@ -880,10 +911,15 @@ function rest(){
   // even when power/supplies are already full — like sleeping in Stardew.
   state.roofSitting = false;
   state.power = state.maxPower;
+  state.oreVein = 100;
   const prevSeason = getSeason();
   state.day += 1;
   state.hour = 6;            // wake up at 06:00
   state._nightWarned = false;
+  rollWeather();
+  if (state.weather !== 'clear'){
+    setTimeout(()=>{ showMsg((state.weather==='rain'?'🌧 오늘은 비가 내립니다':'❄ 오늘은 눈이 내립니다'), 220); }, 400);
+  }
   state.temp = 22.0 + Math.random() * 0.4;
   // new day resets office availability and clears the daily buff
   state.officeDoneToday = false;
@@ -1688,6 +1724,7 @@ function update(){
   if (state.scene === 'hall'){ updateHall(); return; }
   if (state.scene === 'lobby'){ updateLobby(); return; }
   if (state.scene === 'garden'){ updateGarden(); return; }
+  if (state.scene === 'mine'){ updateMine(); return; }
 
   // tick auxiliary systems (combo/rush pause during shop, minigame still resolves)
   tickMiniGame();
@@ -1718,7 +1755,7 @@ function update(){
     ny = Math.max(FLOOR_TOP, Math.min(FLOOR_BOT, ny));
     // collision with stations (feet must stay below their bottoms or to side)
     for (const s of STATIONS){
-      if (s.id === 'npc' || s.id === 'crate' || s.id === 'exit' || s.id === 'shop' || s.id === 'qa') continue;
+      if (s.id === 'npc' || s.id === 'crate' || s.id === 'exit' || s.id === 'shop' || s.id === 'qa' || s.id === 'minedoor') continue;
       const sx0=s.x, sx1=s.x+s.w, sy0=s.y, sy1=s.y+s.h;
       // expand a bit for visual collision (player width ~ 8)
       if (nx > sx0 - 4 && nx < sx1 + 4 && ny > sy0 - 2 && ny < sy1 + 2){
@@ -2268,6 +2305,7 @@ function drawPlayer(){
   else if (state.scene === 'hall'){ fx = state.hx; fy = state.hy; }
   else if (state.scene === 'lobby'){ fx = state.lx; fy = state.ly; }
   else if (state.scene === 'garden'){ fx = state.gx; fy = state.gy; }
+  else if (state.scene === 'mine'){ fx = state.mx2; fy = state.my2; }
   else { fx = state.sx; fy = state.sy; }   // smock room
   const x = (fx - 7) | 0;
   const y = (fy - 26) | 0;
@@ -2452,6 +2490,7 @@ function drawSpeech(){
   else if (state.scene === 'hall'){ pfx = state.hx; pfy = state.hy; }
   else if (state.scene === 'lobby'){ pfx = state.lx; pfy = state.ly; }
   else if (state.scene === 'garden'){ pfx = state.gx; pfy = state.gy; }
+  else if (state.scene === 'mine'){ pfx = state.mx2; pfy = state.my2; }
   else { pfx = state.sx; pfy = state.sy; }
   const px = s.who === 'npc' ? 319 : (pfx|0);
   const py = s.who === 'npc' ? 180 : (pfy - 32);
@@ -3792,6 +3831,19 @@ function drawSeasonalWindow(wx, wy, ww, wh, sea, th){
     R(wx,wy+wh-12,ww,12,'#eef4fa');
     for (let i=0;i<10;i++){ const px=(state.t*0.3 + i*26 + Math.sin(state.t*0.02+i)*8)%ww; const py=(state.t*0.5+i*14)%wh; R(wx+px|0, wy+py|0, 2,2, '#ffffff'); }
   }
+  // weather seen through the glass
+  if (state.weather !== 'clear'){
+    ctx.globalAlpha = 0.16; R(wx, wy, ww, wh, '#3a4656'); ctx.globalAlpha = 1;
+    if (state.weather === 'rain'){
+      ctx.globalAlpha = 0.55;
+      for (let i=0;i<26;i++){ const x=wx+((i*29 + state.t*4) % ww); const y=wy+((i*17 + state.t*9) % wh); R(x|0, y|0, 1, 4, '#bcd0e4'); }
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.globalAlpha = 0.9;
+      for (let i=0;i<22;i++){ const sway=Math.sin(state.t*0.03+i)*3; const x=wx+(((i*23+sway)+state.t*0.5) % ww); const y=wy+((i*19 + state.t*1.3) % wh); R(x|0, y|0, 1, 1, '#ffffff'); }
+      ctx.globalAlpha = 1;
+    }
+  }
   // window cross bars
   R(wx+ww/2-1, wy, 2, wh, frame);
   R(wx, wy+wh/2-1, ww, 2, frame);
@@ -4000,6 +4052,30 @@ function drawSeasonParticles(sea, th){
   }
 }
 
+// full-scene rain / snow for outdoor scenes (roof, garden)
+function drawWeatherOverlay(){
+  if (state.weather === 'rain'){
+    ctx.globalAlpha = 0.13; R(0,0,W,H,'#3a4656'); ctx.globalAlpha = 1;   // grey wash
+    ctx.globalAlpha = 0.5;
+    for (let i=0;i<82;i++){
+      const x = ((i*61 + state.t*5) % (W+30)) - 15;
+      const y = ((i*37 + state.t*12) % (H+24)) - 12;
+      R(x|0, y|0, 1, 5, '#b4ccdf'); R((x-1)|0, (y+3)|0, 1, 3, '#9fb8d0');
+    }
+    ctx.globalAlpha = 1;
+  } else if (state.weather === 'snow'){
+    ctx.globalAlpha = 0.9;
+    for (let i=0;i<64;i++){
+      const sway = Math.sin(state.t*0.03 + i) * 6;
+      const x = (((i*73 + sway) + state.t*0.7) % (W+20)) - 10;
+      const y = ((i*41 + state.t*1.7) % (H+18)) - 9;
+      const s = (i%5===0) ? 2 : 1;
+      R(x|0, y|0, s, s, '#ffffff');
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
 function drawOfficeHud(th, sea){
   // top bar (paper-ish, distinct from fab's control panel)
   R(0,0,W,22,'#3a2818');
@@ -4155,6 +4231,7 @@ function nearestSmockStation(){
 }
 
 function handleSmockKey(k){
+  if (state.crafting > 0) return;   // busy crafting
   if (k === ' ' || k === 'e') smockInteract();
 }
 
@@ -4169,6 +4246,8 @@ function smockInteract(){
   } else if (s.id === 'officedoor'){
     if (state.smockOn){ showMsg('⚠ 사무실 입장 불가 — smock을 벗으세요'); return; }
     switchScene('office');
+  } else if (s.id === 'craftbox'){
+    startCraft();
   } else if (s.id === 'npc'){
     talkNpc();
   }
@@ -4180,6 +4259,27 @@ function toggleSmock(){
 }
 
 function updateSmock(){
+  // wafer crafting in progress (the airlock prep)
+  if (state.crafting > 0){
+    state.crafting--;
+    if (state.crafting === 1){
+      state.inventory.ore -= ORE_PER_WAFER;
+      state.power = Math.max(0, state.power - 4);
+      state.hour += 0.5;
+      state.carry = 'raw';
+      state.carryQ = Math.random() < 0.5 ? 1 : 0;     // crafted wafers: 50% Good head-start
+      state.carryQA = null;
+      const tag = state.carryQ===1 ? 'Good 웨이퍼 완성!' : '실리콘 웨이퍼 완성';
+      speak('self', '🟢 ' + tag + ' — smock 착용 후 팹으로', 170);
+      spawnFloater(344, 150, tag, state.carryQ===1?C.grnHi:'#dfeaf2', { size:7, life:52 });
+      spawnBurst(344, 154, ['#cfe8f4','#bfe0ec','#fff2bc'], 12, { spd:1.5, up:0.5 });
+      addShake(1.6);
+      unlock('FIRST_CRAFT', '🛠 첫 웨이퍼 제작!', 0);
+      if (state.hour >= 26){ autoCollapse(); return; }
+    }
+    state.pmove=false; state.pwalk=0; state.prompt=null;
+    return;
+  }
   let vx=0, vy=0;
   if (state.fadeDir === 0){
     if (isDown('arrowup','w'))    { vy=-1; state.pdir='up'; }
@@ -4194,9 +4294,9 @@ function updateSmock(){
     let nx=state.sx+vx*sp, ny=state.sy+vy*sp;
     nx=Math.max(SMOCK_LEFT, Math.min(SMOCK_RIGHT, nx));
     ny=Math.max(SMOCK_TOP, Math.min(SMOCK_BOT, ny));
-    // collide with the changing bench/lockers
+    // collide with the changing bench/lockers and the craft box
     for (const s of SMOCK_STATIONS){
-      if (s.id !== 'changer') continue;
+      if (s.id !== 'changer' && s.id !== 'craftbox') continue;
       const sx0=s.x, sx1=s.x+s.w, sy0=s.y, sy1=s.y+s.h;
       if (nx>sx0-4 && nx<sx1+4 && ny>sy0-2 && ny<sy1+2){
         const tx=state.sx+vx*sp;
@@ -4237,6 +4337,7 @@ function renderSmock(){
     { sortY: 164, draw: drawSmockOfficeDoor },
     { sortY: 164, draw: drawSmockFabDoor },
     { sortY: 150, draw: drawMirror },
+    { sortY: 162, draw: drawSmockCraftBox },
     { sortY: 172, draw: ()=>{ const q=state.npcQuests.find(x=>x.loc==='smock'); if(q) drawQuestNpc(120,172,q); } },
     { sortY: state.sy + 0.5, draw: drawPlayer },
   ];
@@ -4244,6 +4345,7 @@ function renderSmock(){
   for (const e of ents) e.draw();
 
   drawSpeech();
+  if (state.crafting>0) drawBusyBar(344, 138, 1 - state.crafting/46, '🛠 제작 중', '#9ee0a8');
   drawSmockHud();
   drawPrompt();
   drawMsg();
@@ -4357,6 +4459,24 @@ function drawSmockFabDoor(){
   R(430,106,6,2, state.smockOn ? C.grnHi : C.red);
 }
 
+function drawSmockCraftBox(){
+  // wafer fabrication unit (turns mined silicon into a clean wafer before entering the fab)
+  ctx.save(); ctx.translate(310,118);
+  R(0,4,68,42,'#46505e'); R(0,4,68,3,'#5a6472'); R(0,44,68,2,'#2e3640');
+  // furnace mouth glows while crafting
+  const hot = state.crafting > 0;
+  R(8,14,28,22,'#1a2028'); R(10,16,24,18, hot ? (((state.t>>2)&1)?'#ff8a3a':'#e0641c') : '#26303a');
+  if (hot){ for (let i=0;i<4;i++){ P(13+i*6, 16+((state.t+i*3)%16), '#ffd060'); } }
+  // output tray with a sample wafer
+  R(44,18,18,12,'#2a323c'); R(46,20,14,8,'#6fb6d6'); R(46,20,14,2,'#a6d4ea');
+  // control panel
+  R(44,8,18,7,'#2a323c'); R(47,10,4,3,hot?'#9ee0a8':'#3a4654'); R(53,10,4,3,C.badge);
+  // hopper showing silicon feedstock
+  R(8,-6,20,10,'#2a323c'); for (let i=0;i<3;i++) R(10+i*6,-4,4,4,'#5aa8c8');
+  R(2,46,8,8,'#3a4452'); R(58,46,8,8,'#3a4452');   // legs
+  ctx.restore();
+  txt('웨이퍼 제작기', 344, 168, 5, '#a8c4e0', 'center');
+}
 function drawSmockHud(){
   // slim top bar
   R(0,0,W,22,'#2a3850');
@@ -4372,14 +4492,16 @@ function drawSmockHud(){
   txt(on ? 'smock 착용 (FAB OK)' : '평상복 (OFFICE OK)', 240, 14, 5,
       on ? '#a8e0f0' : '#f0c870', 'center');
 
-  // day + clock (right)
-  txt('DAY ' + state.day, 388, 14, 6, '#cfe0f4');
+  // silicon stock (right of center) + day + clock
+  R(312,4,40,15,'#1a2438'); R(316,8,6,6,'#5aa8c8');
+  txt('x' + state.inventory.ore, 344, 14, 5, '#a8e0f0', 'end');
+  txt('DAY ' + state.day, 400, 14, 5, '#cfe0f4');
   txt(clockStr(), 472, 14, 6, clockColor(), 'end');
 
   // bottom hint
   R(0,H-14,W,14,'#2a3850');
   R(0,H-14,W,1,'#3a5680');
-  txt('가운데 락커=smock 착용/탈의  ·  좌:사무실(평상복)  우:팹(smock)', W/2, H-4, 6, '#9ab4cc', 'center');
+  txt('락커=smock  ·  제작기=실리콘 ' + ORE_PER_WAFER + '개로 웨이퍼  ·  좌:사무실  우:팹', W/2, H-4, 6, '#9ab4cc', 'center');
 }
 
 // ============================================================
@@ -4880,6 +5002,7 @@ function renderRoof(){
   for (const e of ents) e.draw();
 
   drawSeasonParticles(sea, th);   // petals / motes / leaves / snow over everything
+  drawWeatherOverlay();           // rain / heavier snow if today's weather calls for it
 
   drawSpeech();
   drawRoofHud(sea);
@@ -5024,6 +5147,7 @@ function drawRoofHud(sea){
   // season + clock
   R(300,5,80,13,'#16242e'); R(304,8,8,8,SEASON_THEME[sea].accent);
   txt(SEASON_AB[sea]+' '+SEASON_KR[sea], 340, 14, 5, SEASON_THEME[sea].accent, 'center');
+  txt(weatherStr(), 250, 14, 5, '#cfe8f4', 'center');
   txt(clockStr(), 470, 14, 6, clockColor(), 'end');
   R(0,H-14,W,14,'#2a3a4a'); R(0,H-14,W,1,'#3a5a6a');
   txt('벤치=사색(Power +55, 3시간)  ·  계단=휴게실로  ·  사계절·노을·밤하늘을 즐겨요', W/2, H-4, 6, '#a8cad8','center');
@@ -5225,6 +5349,7 @@ function gardenInteract(){
   const s=nearestGardenStation(); if(!s) return;
   if (s.id==='lobbydoor') switchScene('lobby');
   else if (s.id==='gbench') gardenRest();
+  else if (s.id==='minedoor') switchScene('mine');
 }
 function gardenRest(){
   if (state.power >= state.maxPower){ speak('self', '🌼 바람이 좋다… 잠깐 산책', 140); return; }
@@ -5261,12 +5386,14 @@ function renderGarden(){
     { sortY:170, draw:()=>drawGardenBeds(sea,th) },
     { sortY:176, draw:()=>drawFountain() },
     { sortY:200, draw:drawGardenBench },
+    { sortY:172, draw:drawGardenMineEntrance },
     { sortY: state.gy+0.5, draw:drawPlayer },
   ];
   ents.sort((a,b)=>a.sortY-b.sortY);
   for (const e of ents) e.draw();
 
   drawSeasonParticles(sea, th);
+  drawWeatherOverlay();
   drawSpeech(); drawGardenHud(sea); drawPrompt(); drawMsg(); drawAchv();
 }
 function drawGardenSkyline(sea, th){
@@ -5327,14 +5454,177 @@ function drawGardenBench(){
   R(4,13,4,8,'#5a4028'); R(72,13,4,8,'#5a4028');
   ctx.restore();
 }
+function drawGardenMineEntrance(){
+  // a rocky quarry adit at the edge of the grounds → silicon mine
+  ctx.save(); ctx.translate(412,138);
+  R(0,0,46,72,'#5a5258'); R(0,0,46,3,'#6e666c'); R(2,4,42,4,'#4a4248');   // rock mound
+  for (let i=0;i<8;i++){ P((i*53)%44, 8+(i*37)%60, '#6a626a'); }            // rough texture
+  // timbered tunnel mouth
+  R(12,24,24,48,'#1a141c');
+  R(8,20,32,5,'#5a4632'); R(8,20,32,2,'#6e5742');                          // lintel
+  R(10,24,4,48,'#5a4632'); R(34,24,4,48,'#5a4632');                        // posts
+  // rail + cart hint coming out
+  R(16,68,16,2,'#3a3238');
+  // sign
+  R(8,12,32,7,'#2a2230'); txt('MINE', 24, 18, 4, '#9ab4cc', 'center');
+  const blink=(state.t>>4)&1; R(20,21,6,2, blink?'#7ce0f0':'#3a6878');
+  ctx.restore();
+}
 function drawGardenHud(sea){
   R(0,0,W,22,'#2c4a3a'); R(0,0,W,2,'#3a6a4a'); R(0,20,W,2,'#16281e');
   txt('FRONT GARDEN · 외부 정원', 8, 14, 6, '#d8f0e0');
   R(300,5,80,13,'#16281e'); R(304,8,8,8,SEASON_THEME[sea].accent);
   txt(SEASON_AB[sea]+' '+SEASON_KR[sea], 340, 14, 5, SEASON_THEME[sea].accent,'center');
+  txt(weatherStr(), 250, 14, 5, '#d8f0e0', 'center');
   txt(clockStr(), 470, 14, 6, clockColor(),'end');
   R(0,H-14,W,14,'#2c4a3a'); R(0,H-14,W,1,'#3a6a4a');
   txt('벤치=잠깐 휴식(+35)  ·  건물 입구=로비로  ·  사계절·노을·밤하늘', W/2, H-4, 6, '#a8d0b8','center');
+}
+
+// ============================================================
+//  SILICON MINE (광산) — mine ore at the vein, craft wafers at the box
+// ============================================================
+function nearestMineStation(){
+  let best=null,bd=999;
+  for (const s of MINE_STATIONS){
+    const d=Math.hypot(state.mx2-s.doorX, state.my2-s.doorY);
+    if (d<26 && d<bd){ bd=d; best=s; }
+  }
+  return best;
+}
+function handleMineKey(k){
+  if (state.mining>0 || state.crafting>0) return;   // busy
+  if (k===' '||k==='e') mineInteract();
+  if (k==='r') rest();
+}
+function mineInteract(){
+  const s=nearestMineStation(); if(!s) return;
+  if (s.id==='vein') startMining();
+  else if (s.id==='gardendoor') switchScene('garden');
+}
+function startMining(){
+  if (state.oreVein < 1){ speak('self','광맥이 고갈됨 — 잠시 후 회복', 130); return; }
+  if (state.power < 3){ showMsg('Power 부족! R로 휴식'); return; }
+  state.mining = 26;
+  state.pdir = 'up';
+}
+function startCraft(){
+  if (state.carry){ showMsg('손이 차 있음 — Q로 버리기'); return; }
+  if (state.inventory.ore < ORE_PER_WAFER){ showMsg('실리콘 ' + ORE_PER_WAFER + '개 필요 (보유 ' + state.inventory.ore + ')'); return; }
+  if (state.power < 4){ showMsg('Power 부족! R로 휴식'); return; }
+  state.crafting = 46;
+  state.pdir = 'up';
+}
+function updateMine(){
+  // mining swing
+  if (state.mining > 0){
+    state.mining--;
+    if (state.mining === 12){                       // the strike connects
+      const rich = Math.random() < 0.12;
+      const gain = (1 + (Math.random()<0.35?1:0)) + (rich?2:0);
+      state.inventory.ore += gain;
+      state.oreVein = Math.max(0, state.oreVein - gain);
+      state.power = Math.max(0, state.power - 3);
+      state.hour += 0.25;
+      spawnFloater(112, 172, '+' + gain + ' 실리콘' + (rich?' 💎':''), rich?'#7ce0f0':'#dfeaf2', { size: rich?8:7, life:46 });
+      spawnBurst(112, 176, rich?['#7ce0f0','#bfe0ec','#ffffff']:['#9a8e7e','#b8ac98','#d8d0c0'], rich?15:9, { spd:1.5, up:0.4 });
+      addShake(rich?2.6:1.3);
+      if (rich) unlock('RICH_VEIN', '💎 노다지! 풍부한 광맥', 0);
+      if (state.hour >= 26){ autoCollapse(); return; }
+    }
+  }
+  if (state.mining>0){ state.pmove=false; state.pwalk=0; state.prompt=null; return; }
+  // slow vein regeneration
+  if (state.oreVein < 100) state.oreVein = Math.min(100, state.oreVein + 0.02);
+  roomMove(()=>({x:state.mx2,y:state.my2}), (x,y)=>{state.mx2=x;state.my2=y;},
+    [MINE_LEFT,MINE_RIGHT,MINE_TOP,MINE_BOT], [MINE_STATIONS[0]]);
+  state.prompt = nearestMineStation();
+}
+function renderMine(){
+  // dark rock cavern
+  R(0,0,W,H,'#241e26');
+  R(0,22,W,80,'#332b34'); R(0,22,W,2,'#42384a'); R(0,100,W,2,'#1c1620');
+  // rough rock texture on the walls
+  for (let i=0;i<60;i++){ const x=(i*97)%W, y=24+(i*53)%72; R(x,y,3,2,'#2c252e'); P(x+1,y+1,'#3c3340'); }
+  // support beams
+  for (const bx of [120, 250, 380]){ R(bx-3,22,6,80,'#5a4632'); R(bx-3,22,6,2,'#6e5742'); }
+  R(0,96,W,6,'#4a3a28');
+  // ceiling lamps
+  for (const lx of [110, 240, 370]){ R(lx-2,24,4,3,'#3a3024'); ctx.globalAlpha=0.5; R(lx-6,27,12,8,'#5a4a28'); ctx.globalAlpha=1; P(lx,30,'#ffe49a'); }
+  // floor — rocky ground + rails
+  for (let y=102;y<240;y+=14){
+    for (let x=0;x<W;x+=22){ R(x,y,22,14,((x/22|0)+(y/14|0))&1?'#3a3038':'#332a32'); }
+  }
+  R(150,150,W-150,4,'#2a2228');                     // mine cart rail bed
+  for (let x=160;x<W;x+=12){ R(x,149,2,6,'#5a5258'); }
+  R(150,152,W-150,1,'#6a6068'); R(150,156,W-150,1,'#6a6068');
+
+  const ents=[
+    { sortY:190, draw:drawOreVein },
+    { sortY:174, draw:drawMineExit },
+    { sortY:188, draw:drawMineCart },
+    { sortY: state.my2+0.5, draw:drawPlayer },
+  ];
+  ents.sort((a,b)=>a.sortY-b.sortY);
+  for (const e of ents) e.draw();
+
+  drawSpeech();
+  if (state.mining>0) drawBusyBar(112, 138, 1 - state.mining/26, '⛏ 채굴 중', '#bcd0e4');
+  drawMineHud();
+  drawPrompt(); drawMsg(); drawAchv();
+}
+function drawBusyBar(cx, y, t, label, col){
+  R(cx-34, y, 68, 12, '#1a141c'); R(cx-34, y, 68, 1, '#42384a');
+  R(cx-32, y+2, Math.round(64*Math.min(1,Math.max(0,t))), 4, col);
+  txt(label, cx, y+11, 5, '#e8e0ea', 'center');
+}
+function drawOreVein(){
+  // a rock face embedded with glowing silicon crystals
+  ctx.save(); ctx.translate(60,150);
+  R(0,0,104,40,'#473b48'); R(0,0,104,3,'#564658'); R(0,38,104,2,'#322830');
+  // cracks
+  R(20,6,2,28,'#352b36'); R(60,4,2,30,'#352b36'); R(84,10,2,24,'#352b36');
+  // silicon crystals (brighten with remaining richness)
+  const lit = state.oreVein > 4;
+  const crystals = [[14,12,5],[30,20,6],[48,10,5],[66,22,6],[88,16,5],[40,30,4],[74,8,4]];
+  for (const [cxx,cyy,r] of crystals){
+    R(cxx,cyy,r,r, lit?'#5aa8c8':'#3a5868');
+    R(cxx+1,cyy+1,r-2,r-2, lit?'#8ad0e8':'#4a6878');
+    if (lit && (state.t>>4)%7 === (cxx%7)) P(cxx+1,cyy+1,'#cdeefb');
+  }
+  ctx.restore();
+  txt('실리콘 광맥', 112, 196, 5, '#9ab4cc', 'center');
+}
+function drawMineExit(){
+  // timbered adit (tunnel mouth) leading back up to the surface garden
+  R(412,112,44,66,'#1a141c');                              // dark opening
+  R(410,108,48,6,'#5a4632'); R(410,108,48,2,'#6e5742');    // lintel beam
+  R(410,112,5,66,'#5a4632'); R(451,112,5,66,'#5a4632');    // side timbers
+  // a hint of daylight up the shaft
+  R(424,116,18,10,'#7fb6d6'); R(426,117,14,4,'#a6d4ea');
+  R(420,150,28,8,'#2a3a24'); txt('▲ 정원', 434, 156, 5, '#bfe8c8','center');
+  const blink=(state.t>>4)&1; R(430,110,8,2, blink?'#9ee0a8':'#5a8c64');
+}
+function drawMineCart(){
+  ctx.save(); ctx.translate(196,168);
+  R(0,4,30,12,'#4a4048'); R(0,4,30,2,'#5e525a'); R(2,2,26,3,'#352b32');
+  // ore inside
+  R(4,0,8,4,'#5aa8c8'); R(14,-1,7,5,'#8ad0e8'); R(20,1,7,4,'#4a6878');
+  R(4,16,6,6,'#2a2228'); R(20,16,6,6,'#2a2228');   // wheels
+  P(7,19,'#6a6068'); P(23,19,'#6a6068');
+  ctx.restore();
+}
+function drawMineHud(){
+  R(0,0,W,22,'#2a2230'); R(0,0,W,2,'#42384a'); R(0,20,W,2,'#16111c');
+  txt('SILICON QUARRY · 실리콘 채석장', 8, 14, 6, '#cfe8f4');
+  // ore held
+  R(296,5,86,13,'#16111c'); R(300,8,6,6,'#5aa8c8');
+  txt('실리콘 x' + state.inventory.ore, 344, 14, 6, '#cfe8f4', 'center');
+  // vein richness
+  R(398,7,70,9,'#16111c'); R(399,8,Math.round(68*state.oreVein/100),7,'#5aa8c8');
+  txt('광맥', 392, 14, 5, '#9ab4cc', 'end');
+  R(0,H-14,W,14,'#2a2230'); R(0,H-14,W,1,'#42384a');
+  txt('광맥=채굴해서 실리콘 비축  ·  웨이퍼 제작은 탈의실에서  ·  갱도=정원으로', W/2, H-4, 6, '#9ab4cc','center');
 }
 
 // ============================================================
@@ -5430,6 +5720,7 @@ function frame(){
   else if (state.scene === 'hall') renderHall();
   else if (state.scene === 'lobby') renderLobby();
   else if (state.scene === 'garden') renderGarden();
+  else if (state.scene === 'mine') renderMine();
   else renderFab();
 
   // world-space juice (over the scene, under modals/fade)
@@ -5456,6 +5747,7 @@ function frame(){
 // Welcome
 newQuest();
 initNpcQuests();
+rollWeather();
 setTimeout(() => {
   speak('npc', '오늘도 좋은 수율을!', 220);
 }, 600);
