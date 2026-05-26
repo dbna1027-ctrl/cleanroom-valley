@@ -180,7 +180,7 @@ const STATIONS = [
   { id:'etcher', x:352, y:116, w:92, h:78,  prompt:'식각 시작',     doorX:398, doorY:202 },
   { id:'qa',     x:296, y:130, w:50, h:46,  prompt:'QA 검사',       doorX:321, doorY:182 },
   { id:'crate',  x:432, y:200, w:32, h:24,  prompt:'출하',         doorX:448, doorY:228 },
-  { id:'npc',    x:312, y:188, w:14, h:26,  prompt:'대화',          doorX:319, doorY:222 },
+  { id:'npc',    x:312, y:188, w:14, h:26,  prompt:'재현과 대화',     doorX:319, doorY:206 },
 ];
 
 // ============================================================
@@ -229,6 +229,11 @@ const state = {
   quest: null,            // { type, target, progress, reward, label }
   questDone: 0,
   perfectQuestCount: 0,
+  // NPC quests (one per location) + quest log overlay
+  npcQuests: [],          // populated from NPC_QUESTS at init
+  questLogOpen: false,
+  npcQuestsClaimed: 0,
+  npcDialog: null,        // { name, role, color, text } — bottom dialogue box
   // achievements
   achv: {},               // id -> true
   achvQ: [],              // queue of { text, until, sub }
@@ -457,6 +462,7 @@ const OFFICE_STATIONS = [
   { id:'fabdoor',  x:34,  y:118, w:34,  h:46, prompt:'탈의실로 나가기', doorX:51,  doorY:172 },
   { id:'breakdoor',x:418, y:114, w:32,  h:48, prompt:'휴게실로',       doorX:432, doorY:168 },
   { id:'rnddoor',  x:112, y:74,  w:34,  h:26, prompt:'R&D 연구소로',   doorX:129, doorY:116 },
+  { id:'npc',      x:348, y:176, w:14,  h:26, prompt:'수빈과 대화',     doorX:348, doorY:192 },
 ];
 
 // gowning room (smock room) — hub between fab and office
@@ -465,6 +471,7 @@ const SMOCK_STATIONS = [
   { id:'changer',   x:198, y:118, w:84, h:48, prompt:'smock 착용/탈의', doorX:240, doorY:180 },
   { id:'officedoor',x:30,  y:118, w:34, h:46, prompt:'사무실로',       doorX:50,  doorY:172 },
   { id:'fabdoor',   x:416, y:118, w:34, h:46, prompt:'팹으로',         doorX:432, doorY:172 },
+  { id:'npc',       x:120, y:172, w:14, h:26, prompt:'광수와 대화',     doorX:120, doorY:188 },
 ];
 
 // break room (휴게실) — recover Power & buffs, casual clothes
@@ -474,6 +481,7 @@ const BREAK_STATIONS = [
   { id:'vending',  x:96,  y:120, w:30, h:50, prompt:'자판기',          doorX:114, doorY:180 },
   { id:'roofdoor', x:28,  y:108, w:30, h:54, prompt:'옥상으로',        doorX:46,  doorY:168 },
   { id:'officedoor',x:418,y:118, w:34, h:46, prompt:'사무실로',        doorX:432, doorY:172 },
+  { id:'npc',      x:190, y:150, w:14, h:26, prompt:'은영과 대화',     doorX:190, doorY:166 },
 ];
 
 // rooftop garden (옥상 정원) — full seasonal view + time-of-day sky, deep rest
@@ -481,6 +489,7 @@ const ROOF_TOP = 162, ROOF_BOT = 226, ROOF_LEFT = 28, ROOF_RIGHT = 452;
 const ROOF_STATIONS = [
   { id:'bench',    x:214, y:178, w:84, h:20, prompt:'사색 (깊은 휴식)', doorX:256, doorY:210 },
   { id:'breakdoor',x:36,  y:150, w:44, h:48, prompt:'내려가기',         doorX:58,  doorY:204 },
+  { id:'npc',      x:330, y:196, w:14, h:26, prompt:'미경과 대화',       doorX:330, doorY:208 },
 ];
 
 // R&D lab (연구소) — research projects that unlock permanent fab tech
@@ -488,6 +497,7 @@ const RND_TOP = 112, RND_BOT = 226, RND_LEFT = 28, RND_RIGHT = 452;
 const RND_STATIONS = [
   { id:'terminal', x:188, y:120, w:104, h:46, prompt:'연구 단말기',    doorX:240, doorY:178 },
   { id:'officedoor',x:34, y:118, w:34,  h:46, prompt:'사무실로',        doorX:51,  doorY:172 },
+  { id:'npc',      x:120, y:172, w:14,  h:26, prompt:'정우와 대화',      doorX:120, doorY:188 },
 ];
 
 // R&D research projects — invest Si, complete after N days, permanent effect
@@ -516,8 +526,20 @@ const SHOP_ITEMS = [
 // ============================================================
 
 const keys = {};
+// IME-robust key name: derive from the physical key (e.code) so letter keys
+// still work while a Korean (한글) input mode is active.
+function normKey(e){
+  const c = e.code || '';
+  if (/^Key[A-Z]$/.test(c)) return c.slice(3).toLowerCase();   // KeyL -> 'l'
+  if (/^Digit[0-9]$/.test(c)) return c.slice(5);               // Digit1 -> '1'
+  if (c === 'Space') return ' ';
+  if (c === 'Escape') return 'escape';
+  if (c === 'Enter' || c === 'NumpadEnter') return 'enter';
+  if (/^Arrow/.test(c)) return c.toLowerCase();                // ArrowUp -> 'arrowup'
+  return (e.key || '').toLowerCase();
+}
 window.addEventListener('keydown', e => {
-  const k = e.key.toLowerCase();
+  const k = normKey(e);
   keys[k] = true;
   if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
 
@@ -527,6 +549,19 @@ window.addEventListener('keydown', e => {
   // Ending screen owns input — any of these resumes endless play
   if (state.ending){
     if (k === ' ' || k === 'enter' || k === 'r') closeEnding();
+    return;
+  }
+
+  // Quest log overlay — openable from any scene
+  if (state.questLogOpen){
+    if (k === 'l' || k === 'escape' || k === 'q' || k === 'j') state.questLogOpen = false;
+    return;
+  }
+  if (k === 'l' || k === 'j'){ state.questLogOpen = true; return; }
+
+  // NPC dialogue box — closes on confirm, openable from any scene
+  if (state.npcDialog){
+    if (k === ' ' || k === 'e' || k === 'enter' || k === 'escape') state.npcDialog = null;
     return;
   }
 
@@ -584,7 +619,7 @@ window.addEventListener('keydown', e => {
   if (k === 'q') discardCarry();
   if (k >= '1' && k <= '8') clickInventory(parseInt(k, 10));
 });
-window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+window.addEventListener('keyup', e => { keys[normKey(e)] = false; });
 
 // Mouse — used by the QA defect-hunter (maps screen px → logical 480x270 coords)
 function cvsToLogical(e){
@@ -650,6 +685,7 @@ function doSceneSwitch(target){
     speak('self', SEASON_KR[getSeason()] + ' 사무실', 120);
   } else if (target === 'fab'){
     state.px = 32; state.py = 222; state.pdir = 'down';
+    if (from === 'smock') questEvent('gown');
   } else if (target === 'smock'){
     if (from === 'fab'){ state.sx = 418; state.sy = 196; state.pdir = 'left'; }
     else { state.sx = 74; state.sy = 196; state.pdir = 'right'; }
@@ -760,17 +796,7 @@ function tryInteract(){
     state.temp = Math.max(20, Math.min(25, state.temp));
   }
   else if (s.id === 'npc'){
-    if (state.quest){
-      const q = state.quest;
-      speak('npc', q.label + ' ' + q.progress + '/' + q.target, 160);
-    } else {
-      const tips = [
-        '오늘 수율 좋네요!',
-        '캘리브레이션은 정중앙!',
-        'B 키로 FAB-MART!',
-      ];
-      speak('npc', tips[Math.floor(state.t/120)%tips.length], 140);
-    }
+    talkNpc();
   }
 }
 
@@ -823,6 +849,7 @@ function rest(){
       state.research.active = null;
       const p = RND_PROJECTS.find(x=>x.id===id);
       unlock('RND_'+id, '🔬 연구 완료: ' + (p?p.name:id), 0);
+      questEvent('research');
       setTimeout(()=>{ toast('🔬 R&D 연구 완료!<br>' + (p?p.name:'') + '<br><small>' + (p?p.desc:'') + '</small>', 3000); }, 200);
     }
   }
@@ -991,6 +1018,7 @@ function resolveMiniGame(){
     // consume the fuel and run the machine
     const inQ = state.carryQ;
     const outQ = result === 'perfect' ? Math.min(2, inQ + 1) : inQ;
+    if (result === 'perfect') questEvent('perfect');
     state.carry = null;
     if (isLitho){
       state.inventory.photoresist = Math.max(0, state.inventory.photoresist - 1);
@@ -1107,6 +1135,214 @@ function newQuest(){
   const q = QUESTS[state.questDone % QUESTS.length];
   state.quest = { ...q, progress: 0 };
   state.perfectQuestCount = 0;
+}
+
+// ---- NPC quests: one resident per location, each with a tiered request ----
+// type is matched by questEvent(); each has two tiers (stage 0 → 1).
+const NPC_QUESTS = [
+  { id:'fab',    loc:'fab',    npc:'재현', role:'공정 엔지니어', emoji:'👷',
+    type:'perfect', kind:'si',
+    tiers:[ {target:5,  reward:60,  title:'정렬의 달인',  desc:'노광/식각 PERFECT 5회'},
+            {target:15, reward:160, title:'무결점 라인',  desc:'PERFECT 누적 15회'} ] },
+  { id:'office', loc:'office', npc:'수빈', role:'행정 팀장', emoji:'🧑‍💼',
+    type:'doc', kind:'krw',
+    tiers:[ {target:6,  reward:200, title:'결재의 신',   desc:'서류 6건 처리'},
+            {target:18, reward:520, title:'페이퍼리스',  desc:'서류 누적 18건 처리'} ] },
+  { id:'smock',  loc:'smock',  npc:'광수', role:'방진 관리자', emoji:'🧤',
+    type:'gown', kind:'si',
+    tiers:[ {target:4,  reward:40,  title:'클린룸 수칙', desc:'방진복 착용 후 팹 출입 4회'},
+            {target:12, reward:120, title:'오염 제로',   desc:'팹 출입 누적 12회'} ] },
+  { id:'break',  loc:'break',  npc:'은영', role:'바리스타', emoji:'☕',
+    type:'break', kind:'krw',
+    tiers:[ {target:3,  reward:120, title:'잘 쉬는 것도 일', desc:'휴게실에서 휴식 3회'},
+            {target:9,  reward:340, title:'재충전 마스터',   desc:'휴식 누적 9회'} ] },
+  { id:'rnd',    loc:'rnd',    npc:'정우', role:'수석 연구원', emoji:'🔬',
+    type:'research', kind:'si',
+    tiers:[ {target:1,  reward:200, title:'첫 혁신',     desc:'R&D 연구 1개 완료'},
+            {target:3,  reward:700, title:'기술 선도',   desc:'R&D 연구 누적 3개 완료'} ] },
+  { id:'roof',   loc:'roof',   npc:'미경', role:'옥상 정원사', emoji:'🌷',
+    type:'meditate', kind:'krw',
+    tiers:[ {target:2,  reward:100, title:'마음의 정원', desc:'옥상에서 사색 2회'},
+            {target:6,  reward:300, title:'사계의 관조', desc:'사색 누적 6회'} ] },
+];
+function initNpcQuests(){
+  state.npcQuests = NPC_QUESTS.map(q => ({
+    id:q.id, loc:q.loc, npc:q.npc, role:q.role, emoji:q.emoji, type:q.type, kind:q.kind,
+    tiers:q.tiers, tier:0, progress:0, status:'active'   // active | ready | done
+  }));
+}
+// advance any matching active NPC quest
+function questEvent(type, n=1){
+  if (!state.npcQuests) return;
+  for (const q of state.npcQuests){
+    if (q.status==='active' && q.type===type){
+      q.progress += n;
+      if (q.progress >= q.tiers[q.tier].target){
+        q.progress = q.tiers[q.tier].target;
+        q.status = 'ready';
+        const nm = q.npc;
+        setTimeout(()=>{ toast('✅ 퀘스트 완료!<br>' + nm + '에게 보고하세요 (' + q.loc.toUpperCase() + ')<br><small>L: 퀘스트 창</small>', 2600); }, 150);
+      }
+    }
+  }
+}
+// the NPC for the current scene (if any)
+function sceneNpcQuest(){
+  if (!state.npcQuests) return null;
+  return state.npcQuests.find(q => q.loc === state.scene) || null;
+}
+function claimNpcQuest(q){
+  const tier = q.tiers[q.tier];
+  if (q.kind==='si') gainSi(tier.reward); else state.krw += tier.reward;
+  state.npcQuestsClaimed++;
+  unlock('NPCQ_'+q.id+'_'+q.tier, '🤝 ' + q.npc + ': ' + tier.title, 0);
+  // advance to next tier or finish
+  if (q.tier < q.tiers.length-1){ q.tier++; q.status='active'; }
+  else q.status='done';
+  toast('🤝 ' + q.npc + '에게 보고 완료!<br>+' + tier.reward + ' ' + (q.kind==='si'?'Si':'₩'), 2200);
+}
+// talk to the NPC of the current scene: show quest progress / claim reward
+function openNpcDialog(name, role, color, text){
+  state.npcDialog = { name, role, color, text };
+}
+function talkNpc(){
+  const q = sceneNpcQuest();
+  if (!q){ openNpcDialog('동료', '', '#7a7a8a', '오늘도 좋은 수율 내봐요!'); return; }
+  const tier = q.tiers[q.tier];
+  const col = NPC_COLORS[q.id] || '#666';
+  if (q.status === 'ready'){
+    claimNpcQuest(q);
+    openNpcDialog(q.npc, q.role, col, '고마워요! 「' + tier.title + '」 달성 🎉\n보상 +' + tier.reward + ' ' + (q.kind==='si'?'Si':'₩') + ' 전달했어요.');
+  } else if (q.status === 'active'){
+    openNpcDialog(q.npc, q.role, col, '의뢰: 「' + tier.title + '」\n' + tier.desc + '  (' + q.progress + '/' + tier.target + ')\n보상 +' + tier.reward + ' ' + (q.kind==='si'?'Si':'₩'));
+  } else {
+    openNpcDialog(q.npc, q.role, col, '의뢰는 다 끝났어요. 늘 고마워요 😊');
+  }
+}
+const NPC_COLORS = { fab:'#3a6ea5', office:'#b0584e', smock:'#4a8a5a', break:'#b0822e', rnd:'#5a4a9a', roof:'#c05a8a' };
+function drawNpcMarker(cx, topY, q){
+  // floating quest marker above an NPC's head
+  if (q.status === 'done'){ R(cx-1,topY+2,2,2,'#e0a0b0'); return; }
+  const ready = q.status === 'ready';
+  const col = ready ? C.grnHi : C.badge;
+  const bob = ready ? ((state.t>>3)&1 ? -1 : 0) : 0;
+  const y = topY + bob;
+  // speech-bubble backing
+  R(cx-4,y-3,8,8, ready ? '#1a3a24' : '#3a2e10');
+  R(cx-4,y-3,8,1, col);
+  // exclamation mark
+  R(cx-1,y-1,2,4, col);
+  R(cx-1,y+4,2,2, col);
+}
+function drawQuestNpc(x, y, q){
+  const sh = NPC_COLORS[q.id] || '#666';
+  const bob = Math.sin(state.t*0.04 + x) > 0 ? -1 : 0;
+  ctx.save(); ctx.translate(x, y + bob);
+  ctx.globalAlpha=0.18; R(-6,1,12,3,'#000'); ctx.globalAlpha=1;
+  // legs
+  R(-4,-6,3,6,'#39323f'); R(1,-6,3,6,'#39323f');
+  // body (shirt color per NPC)
+  R(-5,-17,10,12,sh); R(-5,-17,10,2,'#ffffff'); ctx.globalAlpha=0.18; R(-5,-17,10,2,'#fff'); ctx.globalAlpha=1;
+  R(-6,-16,1,9,'#2a2430'); R(5,-16,1,9,'#2a2430');   // arms
+  // head + hair
+  R(-4,-26,8,9,'#eccba6');
+  R(-4,-27,8,4,'#3a2a1c');
+  P(-2,-22,'#2a1c10'); P(1,-22,'#2a1c10');           // eyes
+  R(-2,-19,4,1,'#c89070');                            // smile
+  // quest marker
+  drawNpcMarker(0, -34, q);
+  ctx.restore();
+}
+
+const LOC_KR = { fab:'팹', office:'사무실', smock:'탈의실', break:'휴게실', rnd:'R&D', roof:'옥상' };
+function drawQuestLog(){
+  if (!state.questLogOpen) return;
+  ctx.fillStyle='rgba(8,10,18,0.82)'; ctx.fillRect(0,0,W,H);
+  const mw=388, mh=246, mx=(W-mw)/2, my=(H-mh)/2;
+  R(mx-3,my-3,mw+6,mh+6,'#c89858');
+  R(mx,my,mw,mh,'#f4ecd4');
+  R(mx,my,mw,3,'#fff8e8'); R(mx,my+mh-3,mw,3,'#c8bca0');
+  // header
+  txt('📋 퀘스트 일지', mx+mw/2, my+17, 8, '#2a1c10', 'center');
+  R(mx+12,my+23,mw-24,1,'#c8bca0');
+  // daily production quest (fab rotating)
+  let y = my+34;
+  if (state.quest){
+    const q=state.quest;
+    txt('[데일리] ' + q.label, mx+16, y, 6, '#7a5838');
+    txt(q.progress + '/' + q.target, mx+mw-16, y, 6, '#a85820', 'end');
+    y += 8;
+    R(mx+16, y, mw-32, 3, '#d8ccb0');
+    R(mx+16, y, Math.round((mw-32)*Math.min(1,q.progress/q.target)), 3, '#c89858');
+    y += 9;
+  }
+  R(mx+12,y,mw-24,1,'#e0d6bc'); y += 8;
+  // NPC quests
+  const rows = state.npcQuests || [];
+  const rowH = 31;
+  for (const q of rows){
+    const tier = q.tiers[q.tier];
+    const ready = q.status==='ready', done = q.status==='done';
+    const accent = done ? '#9a8a6a' : ready ? '#2e8a4a' : NPC_COLORS[q.id];
+    // name + location + role
+    R(mx+16, y-1, 6, 6, accent);
+    txt(q.npc, mx+28, y+5, 6, '#2a1c10');
+    txt('· ' + q.role + ' · ' + LOC_KR[q.loc], mx+28+q.npc.length*9+6, y+5, 5, '#9a8268');
+    // status badge (right)
+    if (done) txt('완료 ✓', mx+mw-16, y+5, 6, '#9a8a6a', 'end');
+    else if (ready){ const b=(state.t>>4)&1; txt('✅ 보고가능', mx+mw-16, y+5, 6, b?'#2e8a4a':'#3aa85a', 'end'); }
+    else txt((q.tier>0?'TIER 2 · ':'') + (q.kind==='si'?'+'+tier.reward+' Si':'+'+tier.reward+'₩'), mx+mw-16, y+5, 5, '#a85820', 'end');
+    // tier title + desc
+    txt('「' + tier.title + '」 ' + tier.desc, mx+28, y+15, 5, done?'#a89878':'#6a5238');
+    // progress bar
+    const by = y+19;
+    R(mx+28, by, mw-44, 3, '#ddd2b6');
+    R(mx+28, by, Math.round((mw-44)*Math.min(1, q.progress/tier.target)), 3, accent);
+    txt(q.progress + '/' + tier.target, mx+mw-16, by+4, 4, '#9a8268', 'end');
+    y += rowH;
+  }
+  txt('각 장소의 NPC에게 말 걸어 보상 수령 · L/Esc 닫기', mx+mw/2, my+mh-8, 5, '#9a7850', 'center');
+}
+
+function drawWrapped(text, x, y, maxW, size, color, lineH){
+  const charW = size * 1.18;
+  const perLine = Math.max(6, Math.floor(maxW / charW));
+  let ly = y;
+  for (const para of String(text).split('\n')){
+    if (para.length === 0){ ly += lineH; continue; }
+    for (let i=0;i<para.length;i+=perLine){
+      txt(para.slice(i, i+perLine), x, ly, size, color, 'start');
+      ly += lineH;
+    }
+  }
+}
+function drawDialogFace(cx, cy, color){
+  R(cx-7,cy-1,14,9,color); R(cx-7,cy-1,14,2,'#ffffff'); ctx.globalAlpha=0.2; R(cx-7,cy-1,14,2,'#fff'); ctx.globalAlpha=1;
+  R(cx-5,cy-10,10,9,'#eccba6');         // head
+  R(cx-5,cy-11,10,3,'#3a2a1c');         // hair
+  P(cx-3,cy-6,'#2a1c10'); P(cx+1,cy-6,'#2a1c10');  // eyes
+  R(cx-2,cy-3,4,1,'#c89070');           // smile
+}
+function drawNpcDialog(){
+  if (!state.npcDialog) return;
+  const d = state.npcDialog;
+  ctx.fillStyle='rgba(8,10,18,0.35)'; ctx.fillRect(0,0,W,H);
+  const bx=22, bw=W-44, by=192, bh=66;
+  R(bx-3,by-3,bw+6,bh+6, d.color || '#3a2818');
+  R(bx,by,bw,bh,'#f6eedc');
+  R(bx,by,bw,3,'#fff8e8'); R(bx,by+bh-3,bw,3,'#c8bca0');
+  // avatar
+  R(bx+8,by+10,42,bh-20, d.color || '#888');
+  R(bx+8,by+10,42,2,'#ffffff'); ctx.globalAlpha=0.2; R(bx+8,by+10,42,2,'#fff'); ctx.globalAlpha=1;
+  drawDialogFace(bx+29, by+10+(bh-20)/2, d.color || '#888');
+  // name plate
+  const np = d.name + (d.role ? (' · ' + d.role) : '');
+  R(bx+58, by+9, Math.min(bw-70, np.length*7+12), 13, d.color || '#3a2818');
+  txt(np, bx+64, by+19, 6, '#fff8e8', 'start');
+  // message
+  drawWrapped(d.text, bx+60, by+36, bw-78, 6, '#2a1c10', 11);
+  // continue hint
+  if ((state.t>>4)&1) txt('▶ Space', bx+bw-12, by+bh-9, 5, '#9a7850', 'end');
 }
 
 // ============================================================
@@ -1366,6 +1602,8 @@ function update(){
   state.t++;
   tickFade();
   if (state.ending) return;   // freeze the world behind the ending screen
+  if (state.questLogOpen){ state.pmove=false; state.pwalk=0; return; }  // quest log pauses the world
+  if (state.npcDialog){ state.pmove=false; state.pwalk=0; return; }     // dialogue pauses the world
   tickClock();
   tickAchv();
   // expire messages (both scenes)
@@ -1942,6 +2180,9 @@ function drawNpc(){
   R(2,25,4,1,C.boot);
   R(8,25,4,1,C.boot);
   ctx.restore();
+  // floating quest marker (재현 = fab NPC)
+  const fq = state.npcQuests && state.npcQuests.find(q=>q.loc==='fab');
+  if (fq) drawNpcMarker(baseX+7, baseY-10 + bob, fq);
 }
 
 // Player — sprite drawn around foot point (px, py). The sprite is
@@ -3071,6 +3312,7 @@ function officeInteract(){
   else if (s.id === 'fabdoor') switchScene('smock');
   else if (s.id === 'breakdoor') switchScene('break');
   else if (s.id === 'rnddoor') switchScene('rnd');
+  else if (s.id === 'npc') talkNpc();
 }
 
 function updateOffice(){
@@ -3165,6 +3407,7 @@ function officeDecide(action){
   }
   w.lastAt = state.t;
   w.idx++;
+  questEvent('doc');
   if (w.idx >= w.docs.length) finishOfficeWork();
 }
 
@@ -3205,6 +3448,7 @@ function renderOffice(){
     { sortY: 172, draw: () => drawCatalogKiosk(th) },
     { sortY: 214, draw: () => drawOfficePlant(th) },
     { sortY: 150, draw: () => drawWaterCooler(th) },
+    { sortY: 176, draw: () => { const q=state.npcQuests.find(x=>x.loc==='office'); if(q) drawQuestNpc(348,176,q); } },
     { sortY: state.oy + 0.5, draw: drawPlayer },
   ];
   if (state.furniture.bookshelf)     ents.push({ sortY: 150, draw: drawFurnBookshelf });
@@ -3772,6 +4016,8 @@ function smockInteract(){
   } else if (s.id === 'officedoor'){
     if (state.smockOn){ showMsg('⚠ 사무실 입장 불가 — smock을 벗으세요'); return; }
     switchScene('office');
+  } else if (s.id === 'npc'){
+    talkNpc();
   }
 }
 
@@ -3838,6 +4084,7 @@ function renderSmock(){
     { sortY: 164, draw: drawSmockOfficeDoor },
     { sortY: 164, draw: drawSmockFabDoor },
     { sortY: 150, draw: drawMirror },
+    { sortY: 172, draw: ()=>{ const q=state.npcQuests.find(x=>x.loc==='smock'); if(q) drawQuestNpc(120,172,q); } },
     { sortY: state.sy + 0.5, draw: drawPlayer },
   ];
   ents.sort((a,b)=>a.sortY-b.sortY);
@@ -4004,6 +4251,7 @@ function breakInteract(){
   else if (s.id==='vending') vendingBuy();
   else if (s.id==='roofdoor') switchScene('roof');
   else if (s.id==='officedoor') switchScene('office');
+  else if (s.id==='npc') talkNpc();
 }
 function takeBreak(){
   if (state.power >= state.maxPower){ showMsg('Power가 이미 가득함'); return; }
@@ -4011,6 +4259,7 @@ function takeBreak(){
   state.temp += (22 - state.temp) * 0.5;     // a breather steadies the line too
   state.hour += 2;                            // costs 2 game-hours (no new day)
   speak('self', '☕ 재충전 — Power +45 (2시간)', 130);
+  questEvent('break');
   if (state.hour >= 26){ autoCollapse(); }
 }
 function vendingBuy(){
@@ -4083,6 +4332,7 @@ function renderBreak(){
     { sortY:170, draw:drawVending },
     { sortY:164, draw:drawBreakOfficeDoor },
     { sortY:163, draw:drawBreakRoofDoor },
+    { sortY:150, draw:()=>{ const q=state.npcQuests.find(x=>x.loc==='break'); if(q) drawQuestNpc(190,150,q); } },
     { sortY:212, draw:()=>drawBreakPlant(th) },
     { sortY: state.by+0.5, draw:drawPlayer },
   ];
@@ -4187,6 +4437,7 @@ function rndInteract(){
   if(!s) return;
   if (s.id==='terminal'){ state.rndMenuOpen=true; state.rndCursor=0; }
   else if (s.id==='officedoor') switchScene('office');
+  else if (s.id==='npc') talkNpc();
 }
 function rndMove(d){
   let n=state.rndCursor+d;
@@ -4240,6 +4491,7 @@ function renderRnd(){
     { sortY:166, draw:drawRndTerminal },
     { sortY:164, draw:drawRndOfficeDoor },
     { sortY:150, draw:drawServerRack },
+    { sortY:172, draw:()=>{ const q=state.npcQuests.find(x=>x.loc==='rnd'); if(q) drawQuestNpc(120,172,q); } },
     { sortY: state.ry+0.5, draw:drawPlayer },
   ];
   ents.sort((a,b)=>a.sortY-b.sortY);
@@ -4349,6 +4601,7 @@ function roofInteract(){
   if(!s) return;
   if (s.id==='bench') meditate();
   else if (s.id==='breakdoor') switchScene('break');
+  else if (s.id==='npc') talkNpc();
 }
 function meditate(){
   if (state.power >= state.maxPower){ showMsg('이미 가득 충전됨 — 풍경을 즐겨요'); return; }
@@ -4357,6 +4610,7 @@ function meditate(){
   state.hour += 3;                                 // a long, deep break
   speak('self', '🌿 사색 — 마음이 맑아짐 (Power +55)', 150);
   unlock('ROOF_ZEN', '🌸 옥상에서 한숨 돌리기', 0);
+  questEvent('meditate');
   if (state.hour >= 26){ autoCollapse(); }
 }
 function updateRoof(){
@@ -4436,6 +4690,7 @@ function renderRoof(){
     { sortY:174, draw:()=>drawRoofPlanters(th, sea) },
     { sortY:200, draw:drawRoofBench },
     { sortY:172, draw:drawRoofStairHut },
+    { sortY:196, draw:()=>{ const q=state.npcQuests.find(x=>x.loc==='roof'); if(q) drawQuestNpc(330,196,q); } },
     { sortY: state.rfy+0.5, draw:drawPlayer },
   ];
   ents.sort((a,b)=>a.sortY-b.sortY);
@@ -4657,6 +4912,11 @@ function frame(){
     ctx.fillRect(0,0,W,H);
   }
 
+  // quest log overlay
+  drawQuestLog();
+  // NPC dialogue box
+  drawNpcDialog();
+
   // ending report card (above everything)
   drawEnding();
 
@@ -4665,11 +4925,12 @@ function frame(){
 
 // Welcome
 newQuest();
+initNpcQuests();
 setTimeout(() => {
   speak('npc', '오늘도 좋은 수율을!', 220);
 }, 600);
 setTimeout(() => {
-  showMsg('Tip: 캘리브레이션 정중앙(녹색) = PERFECT × 4배 보상', 240);
+  showMsg('Tip: 각 장소의 NPC에게 말 걸고 퀘스트 받기 · L = 퀘스트 창', 240);
 }, 2200);
 
 frame();
