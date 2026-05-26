@@ -234,6 +234,10 @@ const state = {
   questLogOpen: false,
   npcQuestsClaimed: 0,
   npcDialog: null,        // { name, role, color, text } — bottom dialogue box
+  // juice / game-feel
+  floaters: [],           // rising +Si / PERFECT! texts
+  particles: [],          // burst sparks
+  shake: 0,               // screen-shake magnitude (decays)
   // achievements
   achv: {},               // id -> true
   achvQ: [],              // queue of { text, until, sub }
@@ -291,6 +295,10 @@ const state = {
   bx: 240, by: 200,       // break-room player position
   rx: 240, ry: 200,       // R&D lab player position
   rfx: 80, rfy: 195,      // rooftop garden player position
+  roofSitting: false,     // sitting on the rooftop bench enjoying the view
+  hx: 240, hy: 190,       // hallway player position
+  lx: 240, ly: 190,       // lobby player position
+  gx: 90,  gy: 200,       // front garden player position
   research: { done:{}, active:null },   // active = { id, daysLeft }
   rndMenuOpen: false,
   rndCursor: 0,
@@ -353,6 +361,7 @@ function tickClock(){
 }
 function autoCollapse(){
   state.collapseCount++;
+  addShake(6);
   speak('self', '😴 너무 늦었다... 다음날 아침', 150);
   rest();   // rest() resets the clock to morning and advances the day
 }
@@ -462,6 +471,7 @@ const OFFICE_STATIONS = [
   { id:'fabdoor',  x:34,  y:118, w:34,  h:46, prompt:'탈의실로 나가기', doorX:51,  doorY:172 },
   { id:'breakdoor',x:418, y:114, w:32,  h:48, prompt:'휴게실로',       doorX:432, doorY:168 },
   { id:'rnddoor',  x:112, y:74,  w:34,  h:26, prompt:'R&D 연구소로',   doorX:129, doorY:116 },
+  { id:'halldoor', x:148, y:74,  w:28,  h:26, prompt:'복도로',         doorX:162, doorY:116 },
   { id:'npc',      x:348, y:176, w:14,  h:26, prompt:'수빈과 대화',     doorX:348, doorY:192 },
 ];
 
@@ -498,6 +508,27 @@ const RND_STATIONS = [
   { id:'terminal', x:188, y:120, w:104, h:46, prompt:'연구 단말기',    doorX:240, doorY:178 },
   { id:'officedoor',x:34, y:118, w:34,  h:46, prompt:'사무실로',        doorX:51,  doorY:172 },
   { id:'npc',      x:120, y:172, w:14,  h:26, prompt:'정우와 대화',      doorX:120, doorY:188 },
+];
+
+// hallway (복도) — connects office to the main lobby
+const HALL_TOP = 112, HALL_BOT = 226, HALL_LEFT = 28, HALL_RIGHT = 452;
+const HALL_STATIONS = [
+  { id:'officedoor',x:28, y:118, w:34, h:46, prompt:'사무실로',  doorX:46,  doorY:170 },
+  { id:'lobbydoor', x:418,y:118, w:34, h:46, prompt:'로비로',    doorX:434, doorY:170 },
+];
+
+// main lobby (정문 로비) — reception + front doors to the outside
+const LOBBY_TOP = 112, LOBBY_BOT = 226, LOBBY_LEFT = 28, LOBBY_RIGHT = 452;
+const LOBBY_STATIONS = [
+  { id:'halldoor', x:28,  y:118, w:34, h:46, prompt:'복도로',       doorX:46,  doorY:170 },
+  { id:'gatedoor', x:202, y:64,  w:76, h:38, prompt:'정문 — 밖으로', doorX:240, doorY:118 },
+];
+
+// front garden (외부 정원) — outdoor courtyard, seasonal + time-of-day sky
+const GARDEN_TOP = 152, GARDEN_BOT = 226, GARDEN_LEFT = 28, GARDEN_RIGHT = 452;
+const GARDEN_STATIONS = [
+  { id:'lobbydoor',x:34, y:120, w:48, h:54, prompt:'건물 안으로', doorX:58,  doorY:200 },
+  { id:'gbench',   x:300,y:182, w:80, h:20, prompt:'벤치에서 쉬기', doorX:340, doorY:210 },
 ];
 
 // R&D research projects — invest Si, complete after N days, permanent effect
@@ -590,6 +621,12 @@ window.addEventListener('keydown', e => {
     handleRoofKey(k);
     return;
   }
+  // Hallway input
+  if (state.scene === 'hall'){ handleHallKey(k); return; }
+  // Lobby input
+  if (state.scene === 'lobby'){ handleLobbyKey(k); return; }
+  // Front garden input
+  if (state.scene === 'garden'){ handleGardenKey(k); return; }
 
   // Shop modal swallows most input
   if (state.shopOpen){
@@ -677,10 +714,12 @@ function doSceneSwitch(target){
   state.scene = target;
   state.pmove = false;
   state.pwalk = 0;
+  state.roofSitting = false;
   if (target === 'office'){
     // spawn near whichever door we came back through
     if (from === 'break'){ state.ox = 410; state.oy = 178; state.pdir = 'left'; }
     else if (from === 'rnd'){ state.ox = 129; state.oy = 124; state.pdir = 'down'; }
+    else if (from === 'hall'){ state.ox = 162; state.oy = 124; state.pdir = 'down'; }
     else { state.ox = 86; state.oy = 192; state.pdir = 'right'; }
     speak('self', SEASON_KR[getSeason()] + ' 사무실', 120);
   } else if (target === 'fab'){
@@ -700,6 +739,17 @@ function doSceneSwitch(target){
   } else if (target === 'roof'){
     state.rfx = 90; state.rfy = 200; state.pdir = 'right';
     speak('self', SEASON_KR[getSeason()] + ' 옥상 정원', 130);
+  } else if (target === 'hall'){
+    if (from === 'lobby'){ state.hx = 410; state.hy = 178; state.pdir = 'left'; }
+    else { state.hx = 70; state.hy = 178; state.pdir = 'right'; }
+    speak('self', '복도', 100);
+  } else if (target === 'lobby'){
+    if (from === 'garden'){ state.lx = 240; state.ly = 132; state.pdir = 'down'; }
+    else { state.lx = 70; state.ly = 178; state.pdir = 'right'; }
+    speak('self', '정문 로비', 110);
+  } else if (target === 'garden'){
+    state.gx = 116; state.gy = 198; state.pdir = 'right';
+    speak('self', SEASON_KR[getSeason()] + ' 정원', 130);
   }
 }
 function tickFade(){
@@ -788,10 +838,14 @@ function tryInteract(){
     gainSi(reward);
     onShipped(state.carryQ);
     const gradeTag = state.carryQA === 'A' ? ' [A]' : state.carryQA === 'B' ? ' [B]' : '';
+    const big = reward >= 35 || state.carryQ === 2;
+    spawnFloater(448, 198, '+' + reward + ' Si' + gradeTag, big ? '#fff2bc' : C.badge, { size: big ? 9 : 7, life: 56 });
+    spawnBurst(448, 204, [C.badge, '#fff2bc', C.grnHi, '#ffffff'], big ? 16 : 8, { spd: big ? 1.8 : 1.2, up: 0.5 });
+    addShake(big ? 3.2 : 1);
     state.carry = null;
     state.carryQ = 0;
     state.carryQA = null;
-    speak('self', '+' + reward + ' Si' + gradeTag + ' !!', 110);
+    speak('self', '출하 완료!', 90);
     state.temp += (Math.random()-0.5) * 0.6;
     state.temp = Math.max(20, Math.min(25, state.temp));
   }
@@ -824,6 +878,7 @@ function discardCarry(){
 function rest(){
   // Resting always advances the day (and eventually the season),
   // even when power/supplies are already full — like sleeping in Stardew.
+  state.roofSitting = false;
   state.power = state.maxPower;
   const prevSeason = getSeason();
   state.day += 1;
@@ -1018,7 +1073,14 @@ function resolveMiniGame(){
     // consume the fuel and run the machine
     const inQ = state.carryQ;
     const outQ = result === 'perfect' ? Math.min(2, inQ + 1) : inQ;
-    if (result === 'perfect') questEvent('perfect');
+    if (result === 'perfect'){
+      questEvent('perfect');
+      spawnFloater(state.px, state.py-28, 'PERFECT!', '#fff2bc', { size: 8, life: 56 });
+      spawnBurst(state.px, state.py-18, ['#fff2bc', C.badge, C.grnHi, '#ffffff'], 16, { spd: 1.8, up: 0.6 });
+      addShake(1.6);
+    } else if (result === 'good'){
+      spawnFloater(state.px, state.py-26, 'Good', C.grnHi, { size: 6, life: 42 });
+    }
     state.carry = null;
     if (isLitho){
       state.inventory.photoresist = Math.max(0, state.inventory.photoresist - 1);
@@ -1195,6 +1257,9 @@ function claimNpcQuest(q){
   const tier = q.tiers[q.tier];
   if (q.kind==='si') gainSi(tier.reward); else state.krw += tier.reward;
   state.npcQuestsClaimed++;
+  spawnFloater(240, 96, '+' + tier.reward + ' ' + (q.kind==='si'?'Si':'₩'), C.badge, { size: 9, life: 56 });
+  spawnBurst(240, 100, [C.badge, '#fff2bc', C.grnHi, '#ffffff'], 18, { spd: 1.9, up: 0.6 });
+  addShake(2.4);
   unlock('NPCQ_'+q.id+'_'+q.tier, '🤝 ' + q.npc + ': ' + tier.title, 0);
   // advance to next tier or finish
   if (q.tier < q.tiers.length-1){ q.tier++; q.status='active'; }
@@ -1514,6 +1579,9 @@ function onShipped(q){
     if (state.rush.shipped >= state.rush.target){
       gainSi(30);
       unlock('RUSH_HERO', '🚨 Rush 성공! +30 보너스', 0);
+      spawnFloater(240, 96, '🚨 RUSH +30 Si', '#fff2bc', { size: 9, life: 60 });
+      spawnBurst(240, 100, [C.red, C.badge, '#fff2bc', '#ffffff'], 20, { spd: 2.1, up: 0.7 });
+      addShake(3.5);
       state.rush = null;
     }
   }
@@ -1617,6 +1685,9 @@ function update(){
   if (state.scene === 'break'){ updateBreak(); return; }
   if (state.scene === 'rnd'){ updateRnd(); return; }
   if (state.scene === 'roof'){ updateRoof(); return; }
+  if (state.scene === 'hall'){ updateHall(); return; }
+  if (state.scene === 'lobby'){ updateLobby(); return; }
+  if (state.scene === 'garden'){ updateGarden(); return; }
 
   // tick auxiliary systems (combo/rush pause during shop, minigame still resolves)
   tickMiniGame();
@@ -2194,6 +2265,9 @@ function drawPlayer(){
   else if (state.scene === 'break'){ fx = state.bx; fy = state.by; }
   else if (state.scene === 'rnd'){ fx = state.rx; fy = state.ry; }
   else if (state.scene === 'roof'){ fx = state.rfx; fy = state.rfy; }
+  else if (state.scene === 'hall'){ fx = state.hx; fy = state.hy; }
+  else if (state.scene === 'lobby'){ fx = state.lx; fy = state.ly; }
+  else if (state.scene === 'garden'){ fx = state.gx; fy = state.gy; }
   else { fx = state.sx; fy = state.sy; }   // smock room
   const x = (fx - 7) | 0;
   const y = (fy - 26) | 0;
@@ -2375,6 +2449,9 @@ function drawSpeech(){
   else if (state.scene === 'break'){ pfx = state.bx; pfy = state.by; }
   else if (state.scene === 'rnd'){ pfx = state.rx; pfy = state.ry; }
   else if (state.scene === 'roof'){ pfx = state.rfx; pfy = state.rfy; }
+  else if (state.scene === 'hall'){ pfx = state.hx; pfy = state.hy; }
+  else if (state.scene === 'lobby'){ pfx = state.lx; pfy = state.ly; }
+  else if (state.scene === 'garden'){ pfx = state.gx; pfy = state.gy; }
   else { pfx = state.sx; pfy = state.sy; }
   const px = s.who === 'npc' ? 319 : (pfx|0);
   const py = s.who === 'npc' ? 180 : (pfy - 32);
@@ -2417,6 +2494,65 @@ function drawMsg(){
   R(x, y, w, 1, C.woodHi);
   R(x, y+15, w, 1, C.woodDk);
   txt(text, W/2, y+11, 7, C.parchment, 'center');
+}
+
+// ============================================================
+//  JUICE — floating numbers, particle bursts, screen shake
+// ============================================================
+function spawnFloater(x, y, text, color, opts){
+  opts = opts || {};
+  state.floaters.push({ x, y, text, color, born: state.t,
+    life: opts.life || 50, vy: opts.vy != null ? opts.vy : -0.5, size: opts.size || 7 });
+  if (state.floaters.length > 40) state.floaters.shift();
+}
+function spawnBurst(x, y, colors, n, opts){
+  opts = opts || {}; n = n || 10;
+  for (let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2;
+    const sp = (opts.spd || 1.2) * (0.4 + Math.random());
+    state.particles.push({
+      x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - (opts.up || 0.3),
+      born: state.t, life: (opts.life || 28) + Math.random()*12,
+      color: colors[(Math.random()*colors.length)|0],
+      size: (Math.random() < 0.35 ? 2 : 1),
+      grav: opts.grav != null ? opts.grav : 0.06,
+    });
+  }
+  if (state.particles.length > 220) state.particles.splice(0, state.particles.length-220);
+}
+function addShake(amt){ state.shake = Math.min(6, state.shake + amt); }
+function tickJuice(){
+  for (let i=state.floaters.length-1;i>=0;i--){
+    const f=state.floaters[i]; f.y += f.vy; f.vy *= 0.97;
+    if (state.t - f.born > f.life) state.floaters.splice(i,1);
+  }
+  for (let i=state.particles.length-1;i>=0;i--){
+    const p=state.particles[i]; p.x+=p.vx; p.y+=p.vy; p.vy+=p.grav; p.vx*=0.98;
+    if (state.t - p.born > p.life) state.particles.splice(i,1);
+  }
+  if (state.shake > 0){ state.shake *= 0.84; if (state.shake < 0.2) state.shake = 0; }
+  // sparkle on a carried PERFECT wafer
+  if (state.scene === 'fab' && state.carry && state.carryQ === 2 && (state.t % 12 === 0)){
+    state.particles.push({ x: state.px + (Math.random()*10-5), y: state.py - 14 - Math.random()*6,
+      vx: 0, vy: -0.25, born: state.t, life: 18, color: '#fff2bc', size: 1, grav: -0.005 });
+  }
+}
+function drawParticles(){
+  for (const p of state.particles){
+    const t=(state.t-p.born)/p.life;
+    if (t > 0.65) ctx.globalAlpha = Math.max(0, 1-(t-0.65)/0.35);
+    R(p.x|0, p.y|0, p.size, p.size, p.color);
+    ctx.globalAlpha = 1;
+  }
+}
+function drawFloaters(){
+  for (const f of state.floaters){
+    const t=(state.t-f.born)/f.life;
+    ctx.globalAlpha = t > 0.6 ? Math.max(0, 1-(t-0.6)/0.4) : 1;
+    txt(f.text, (f.x+1)|0, (f.y+1)|0, f.size, '#1a1208', 'center');
+    txt(f.text, f.x|0, f.y|0, f.size, f.color, 'center');
+    ctx.globalAlpha = 1;
+  }
 }
 
 // ============================================================
@@ -3312,6 +3448,7 @@ function officeInteract(){
   else if (s.id === 'fabdoor') switchScene('smock');
   else if (s.id === 'breakdoor') switchScene('break');
   else if (s.id === 'rnddoor') switchScene('rnd');
+  else if (s.id === 'halldoor') switchScene('hall');
   else if (s.id === 'npc') talkNpc();
 }
 
@@ -3395,15 +3532,21 @@ function officeDecide(action){
   if (!w || w.result) return;
   const doc = w.docs[w.idx];
   const ok = doc.correct === action;
+  const stampTxt = action === 'approve' ? '승인' : action === 'reject' ? '반려' : '보류';
   if (ok){
     w.correct++;
     w.combo++;
     const bonus = 1 + Math.min(0.6, (w.combo-1)*0.15);
     w.krwEarned += Math.round(doc.krw * bonus);
     w.lastResult = 'correct';
+    spawnFloater(240, 150, '✔ ' + stampTxt + (w.combo>1?(' x'+w.combo):''), C.grnHi, { size: 8, life: 40 });
+    spawnBurst(240, 150, [C.grnHi, '#fff2bc', '#ffffff'], 8, { spd: 1.3, up: 0.4 });
+    addShake(1.2);
   } else {
     w.combo = 0;
     w.lastResult = 'wrong';
+    spawnFloater(240, 150, '✘ ' + stampTxt, C.red, { size: 8, life: 40 });
+    addShake(2);
   }
   w.lastAt = state.t;
   w.idx++;
@@ -3444,6 +3587,7 @@ function renderOffice(){
     { sortY: 168, draw: () => drawDesk(th) },
     { sortY: 164, draw: () => drawFabDoor(th) },
     { sortY: 100, draw: () => drawOfficeRndDoor(th) },
+    { sortY: 101, draw: () => drawOfficeHallDoor(th) },
     { sortY: 162, draw: () => drawOfficeBreakDoor(th) },
     { sortY: 172, draw: () => drawCatalogKiosk(th) },
     { sortY: 214, draw: () => drawOfficePlant(th) },
@@ -3786,6 +3930,15 @@ function drawOfficeRndDoor(th){
   R(120,80,8,8,'#0c1828'); R(121,81,6,6,'#1a4a6a');         // window
   R(118,92,22,6,'#0e2a3a'); txt('R&D', 129, 97, 4, '#7ce0f0', 'center');
   R(127,75,4,2,(state.t>>4)&1 ? '#7ce0f0' : '#3a7088');
+}
+
+function drawOfficeHallDoor(th){
+  // plain interior door on the back wall → hallway
+  R(148,74,28,28,'#6a5238'); R(148,74,28,2,'#8a6e4a'); R(148,100,28,2,'#3a2a18');
+  R(148,74,2,28,'#8a6e4a'); R(174,74,2,28,'#3a2a18');
+  R(152,77,20,22,'#7a5e40'); R(162,77,2,22,'#5a4630');
+  R(155,86,2,3,'#d8c060');                                   // handle
+  R(150,93,24,6,'#2a3850'); txt('복도', 162, 98, 4, '#cfe0f4', 'center');
 }
 
 function drawWaterCooler(th){
@@ -4259,6 +4412,7 @@ function takeBreak(){
   state.temp += (22 - state.temp) * 0.5;     // a breather steadies the line too
   state.hour += 2;                            // costs 2 game-hours (no new day)
   speak('self', '☕ 재충전 — Power +45 (2시간)', 130);
+  spawnFloater(state.bx, state.by-28, '+45 ⚡', C.grnHi, { size: 7, life: 48 });
   questEvent('break');
   if (state.hour >= 26){ autoCollapse(); }
 }
@@ -4269,6 +4423,7 @@ function vendingBuy(){
   state.krw -= cost;
   state.power = Math.min(state.maxPower, state.power + 30);
   speak('self', '🥤 에너지드링크 — Power +30', 120);
+  spawnFloater(state.bx, state.by-28, '+30 ⚡', C.grnHi, { size: 7, life: 46 });
 }
 function roomMove(get, set, bounds, blockers){
   let vx=0,vy=0;
@@ -4593,27 +4748,55 @@ function nearestRoofStation(){
   return best;
 }
 function handleRoofKey(k){
+  if (state.roofSitting){
+    if (k===' '||k==='e'||k==='escape'||k==='enter') standBench();
+    return;
+  }
   if (k===' '||k==='e') roofInteract();
   if (k==='r') rest();
 }
 function roofInteract(){
   const s=nearestRoofStation();
   if(!s) return;
-  if (s.id==='bench') meditate();
+  if (s.id==='bench') sitBench();
   else if (s.id==='breakdoor') switchScene('break');
   else if (s.id==='npc') talkNpc();
 }
+function sitBench(){
+  if (state.roofSitting) return;
+  state.roofSitting = true;
+  // seat the player on the bench, gazing out at the view (back to camera)
+  state.rfx = 256; state.rfy = 196; state.pdir = 'up';
+  state.pmove = false; state.pwalk = 0;
+  if (state.power < state.maxPower){
+    meditate();                              // 사색: recover Power + advance time
+  } else {
+    speak('self', '🌇 경치가 좋다… 잠시 앉아 쉰다 (Esc 일어서기)', 200);
+  }
+}
+function standBench(){
+  if (!state.roofSitting) return;
+  state.roofSitting = false;
+  state.rfx = 256; state.rfy = 210; state.pdir = 'down';   // step down in front
+  state.speech = null;
+}
 function meditate(){
-  if (state.power >= state.maxPower){ showMsg('이미 가득 충전됨 — 풍경을 즐겨요'); return; }
   state.power = Math.min(state.maxPower, state.power + 55);
   state.temp += (22 - state.temp) * 0.7;
   state.hour += 3;                                 // a long, deep break
-  speak('self', '🌿 사색 — 마음이 맑아짐 (Power +55)', 150);
+  speak('self', '🌿 사색 — 마음이 맑아짐 (Power +55, Esc 일어서기)', 200);
+  spawnFloater(state.rfx, state.rfy-30, '+55 🌿', C.grnHi, { size: 8, life: 54 });
+  spawnBurst(state.rfx, state.rfy-20, [C.grnHi, '#cfe8c8', '#fff2bc'], 10, { spd: 1.0, up: 0.5, grav: 0.02 });
   unlock('ROOF_ZEN', '🌸 옥상에서 한숨 돌리기', 0);
   questEvent('meditate');
   if (state.hour >= 26){ autoCollapse(); }
 }
 function updateRoof(){
+  if (state.roofSitting){
+    state.pmove = false; state.pwalk = 0;
+    state.prompt = { prompt:'Esc 일어서기', doorX:256, doorY:196 };
+    return;
+  }
   roomMove(()=>({x:state.rfx,y:state.rfy}), (x,y)=>{state.rfx=x;state.rfy=y;},
     [ROOF_LEFT,ROOF_RIGHT,ROOF_TOP,ROOF_BOT], [ROOF_STATIONS[0]]);
   state.prompt = nearestRoofStation();
@@ -4691,7 +4874,7 @@ function renderRoof(){
     { sortY:200, draw:drawRoofBench },
     { sortY:172, draw:drawRoofStairHut },
     { sortY:196, draw:()=>{ const q=state.npcQuests.find(x=>x.loc==='roof'); if(q) drawQuestNpc(330,196,q); } },
-    { sortY: state.rfy+0.5, draw:drawPlayer },
+    { sortY: state.roofSitting ? 201 : (state.rfy+0.5), draw: state.roofSitting ? drawSeatedRoofPlayer : drawPlayer },
   ];
   ents.sort((a,b)=>a.sortY-b.sortY);
   for (const e of ents) e.draw();
@@ -4798,6 +4981,28 @@ function drawRoofBench(){
   R(38,4,8,4,'#2a3a24'); txt('禪', 42, 7, 4, '#bfe8c8','center');
   ctx.restore();
 }
+// player seen from behind, seated on the bench gazing at the view
+function drawSeatedRoofPlayer(){
+  const HR='#2e2018', HRH='#4a3424';
+  const SH='#6a9cd0', SHH='#8ec0ec', SHS='#4a7ab0';
+  const PT='#3a3650', SK='#e8b488';
+  ctx.save();
+  ctx.translate(256-7, 196-20);    // anchor near bench seat
+  // thighs resting on the seat (navy), seen from behind
+  R(2,17,4,4,PT); R(8,17,4,4,PT);
+  R(2,20,10,1,'#2a2840');
+  // torso back (blue shirt)
+  R(1,6,12,12,SH); R(1,6,12,1,SHH); R(1,17,12,1,SHS);
+  // arms resting along the backrest
+  R(0,7,2,8,SH); R(12,7,2,8,SH);
+  R(0,14,2,2,SK); R(12,14,2,2,SK);   // hands
+  // back of head (all hair)
+  R(2,-3,10,9,HR); R(2,-3,10,2,HRH);
+  R(1,-1,1,6,C.outline); R(12,-1,1,6,C.outline);
+  // a contented little sigh occasionally
+  if ((state.t % 90) < 30){ ctx.globalAlpha=0.5; txt('♪', 16, -4, 5, '#cfe8f4'); ctx.globalAlpha=1; }
+  ctx.restore();
+}
 function drawRoofStairHut(){
   // stairwell housing with the door back down to the break room
   ctx.save(); ctx.translate(30,118);
@@ -4822,6 +5027,314 @@ function drawRoofHud(sea){
   txt(clockStr(), 470, 14, 6, clockColor(), 'end');
   R(0,H-14,W,14,'#2a3a4a'); R(0,H-14,W,1,'#3a5a6a');
   txt('벤치=사색(Power +55, 3시간)  ·  계단=휴게실로  ·  사계절·노을·밤하늘을 즐겨요', W/2, H-4, 6, '#a8cad8','center');
+}
+
+// ============================================================
+//  HALLWAY (복도) — office ↔ lobby connector
+// ============================================================
+function nearestHallStation(){
+  let best=null,bd=999;
+  for (const s of HALL_STATIONS){
+    const d=Math.hypot(state.hx-s.doorX, state.hy-s.doorY);
+    if (d<22 && d<bd){ bd=d; best=s; }
+  }
+  return best;
+}
+function handleHallKey(k){
+  if (k===' '||k==='e') hallInteract();
+  if (k==='r') rest();
+}
+function hallInteract(){
+  const s=nearestHallStation(); if(!s) return;
+  if (s.id==='officedoor') switchScene('office');
+  else if (s.id==='lobbydoor') switchScene('lobby');
+}
+function updateHall(){
+  roomMove(()=>({x:state.hx,y:state.hy}), (x,y)=>{state.hx=x;state.hy=y;},
+    [HALL_LEFT,HALL_RIGHT,HALL_TOP,HALL_BOT], []);
+  state.prompt = nearestHallStation();
+}
+function renderHall(){
+  R(0,0,W,H,'#cdbfa6');
+  // wall — warm corporate corridor
+  R(0,22,W,80,'#d8cdb4'); R(0,22,W,2,'#e6dcc6'); R(0,100,W,2,'#b8a988');
+  for (let x=0;x<W;x+=64){ R(x,24,1,76,'#c8baa0'); }
+  R(0,100,W,4,'#a8987a');
+  // framed pictures along the wall (seasonal-tinted)
+  const th=SEASON_THEME[getSeason()];
+  for (let i=0;i<4;i++){ const fx=70+i*100; R(fx,38,40,30,'#7a5e3c'); R(fx+3,41,34,24,th.sky); R(fx+6,52,28,13,th.tree); R(fx+3,41,34,2,th.skyLo); }
+  R(228,30,90,12,'#3a4860'); txt('CORRIDOR · 복도', 273, 39, 5, '#e6eef6','center');
+  // floor — runner carpet over tiles
+  for (let y=102;y<240;y+=16){
+    for (let x=0;x<W;x+=32){ R(x,y,32,16,((x/32|0)+(y/16|0))&1?'#b6a888':'#aa9c7c'); R(x,y,32,1,'#9a8c6c'); }
+  }
+  R(60,150,360,52,'#7a4a4a'); R(60,150,360,2,'#8a5656'); R(60,200,360,2,'#5e3838');
+  for (let x=72;x<420;x+=18){ R(x,156,6,40,'#6e4242'); }
+
+  const ents=[
+    { sortY:164, draw:drawHallOfficeDoor },
+    { sortY:164, draw:drawHallLobbyDoor },
+    { sortY:206, draw:drawHallPlant },
+    { sortY: state.hy+0.5, draw:drawPlayer },
+  ];
+  ents.sort((a,b)=>a.sortY-b.sortY);
+  for (const e of ents) e.draw();
+
+  drawDayNightTint();
+  drawSpeech(); drawHallHud(); drawPrompt(); drawMsg(); drawAchv();
+}
+function drawHallOfficeDoor(){
+  R(28,104,34,62,'#6a5238'); R(28,104,34,2,'#8a6e4a'); R(28,164,34,2,'#3a2a18'); R(60,104,2,62,'#3a2a18');
+  R(32,108,26,54,'#7a5e40'); R(48,108,2,54,'#5a4630');
+  R(34,134,3,4,'#d8c060');
+  R(32,150,26,8,'#2a3850'); txt('OFFICE', 45, 156, 5, '#cfe0f4','center');
+}
+function drawHallLobbyDoor(){
+  R(418,104,34,62,'#6a5238'); R(418,104,34,2,'#8a6e4a'); R(418,164,34,2,'#3a2a18'); R(450,104,2,62,'#3a2a18');
+  R(422,108,26,54,'#7a5e40'); R(438,108,2,54,'#5a4630');
+  R(443,134,3,4,'#d8c060');
+  R(422,150,26,8,'#3a4860'); txt('LOBBY', 435, 156, 5, '#e6eef6','center');
+}
+function drawHallPlant(){
+  ctx.save(); ctx.translate(214,184);
+  R(0,16,16,14,'#8a6a4a'); R(0,16,16,2,'#a8845a');
+  for (const [bx,by,r] of [[2,0,9],[8,-3,10],[5,4,9]]){ R(bx,by,r,r,'#3a7a4a'); R(bx+2,by,3,3,'#4e9a5e'); }
+  R(7,4,3,14,'#5a7838');
+  ctx.restore();
+}
+function drawHallHud(){
+  R(0,0,W,22,'#5a4632'); R(0,0,W,2,'#7a5e42'); R(0,20,W,2,'#3a2a18');
+  txt('CORRIDOR · 복도', 8, 14, 6, '#f0e6d2');
+  R(0,H-14,W,14,'#5a4632'); R(0,H-14,W,1,'#7a5e42');
+  txt('좌: 사무실   ·   우: 정문 로비', W/2, H-4, 6, '#d8c8aa','center');
+}
+
+// ============================================================
+//  LOBBY (정문 로비) — reception + front doors to the outside
+// ============================================================
+function nearestLobbyStation(){
+  let best=null,bd=999;
+  for (const s of LOBBY_STATIONS){
+    const d=Math.hypot(state.lx-s.doorX, state.ly-s.doorY);
+    if (d<24 && d<bd){ bd=d; best=s; }
+  }
+  return best;
+}
+function handleLobbyKey(k){
+  if (k===' '||k==='e') lobbyInteract();
+  if (k==='r') rest();
+}
+function lobbyInteract(){
+  const s=nearestLobbyStation(); if(!s) return;
+  if (s.id==='halldoor') switchScene('hall');
+  else if (s.id==='gatedoor') switchScene('garden');
+}
+function updateLobby(){
+  roomMove(()=>({x:state.lx,y:state.ly}), (x,y)=>{state.lx=x;state.ly=y;},
+    [LOBBY_LEFT,LOBBY_RIGHT,LOBBY_TOP,LOBBY_BOT], [{x:150,y:146,w:120,h:22}]);  // reception desk
+  state.prompt = nearestLobbyStation();
+}
+function renderLobby(){
+  const sea=getSeason(), th=SEASON_THEME[sea];
+  R(0,0,W,H,'#c2c8d2');
+  // marble wall
+  R(0,22,W,80,'#d6dae2'); R(0,22,W,2,'#e8ecf2'); R(0,100,W,2,'#aab0bc');
+  for (let x=0;x<W;x+=48){ R(x,24,1,76,'#c6ccd6'); }
+  R(0,100,W,4,'#9aa2b0');
+  // glass front doors (center) — daylight sky through them
+  drawSeasonalWindow(202, 64, 76, 38, sea, th);
+  // big company logo
+  R(40,34,90,30,'#2a3850'); R(43,37,84,24,'#3a5680');
+  txt('CLEANROOM', 85, 47, 6, '#cfe0f4','center'); txt('VALLEY', 85, 56, 5, '#a8c4e0','center');
+  // glossy marble floor
+  for (let y=102;y<240;y+=18){
+    for (let x=0;x<W;x+=30){ R(x,y,30,18,((x/30|0)+(y/18|0))&1?'#c8ccd4':'#bcc0c8'); R(x,y,30,1,'#aeb2bc'); R(x,y,1,18,'#aeb2bc'); }
+  }
+  // entrance mat
+  R(196,104,88,14,'#3a5680'); R(196,104,88,2,'#4a6a98');
+
+  const ents=[
+    { sortY:158, draw:drawReceptionDesk },
+    { sortY:164, draw:drawLobbyHallDoor },
+    { sortY:102, draw:()=>drawLobbyGate(sea,th) },
+    { sortY:214, draw:drawLobbyPlant },
+    { sortY: state.ly+0.5, draw:drawPlayer },
+  ];
+  ents.sort((a,b)=>a.sortY-b.sortY);
+  for (const e of ents) e.draw();
+
+  drawDayNightTint();
+  drawSpeech(); drawLobbyHud(); drawPrompt(); drawMsg(); drawAchv();
+}
+function drawReceptionDesk(){
+  ctx.save(); ctx.translate(150,138);
+  R(0,12,120,18,'#6a7a92'); R(0,12,120,2,'#8090a8'); R(0,28,120,2,'#4a586e');   // desk
+  R(0,8,120,5,'#dfe4ec'); R(0,8,120,1,'#ffffff');                               // countertop
+  R(48,0,24,9,'#2a3850'); txt('안내', 60, 7, 4, '#cfe0f4','center');             // sign
+  // monitor
+  R(14,2,16,9,'#1a2230'); R(15,3,14,7,'#3a6088');
+  R(96,3,12,8,'#1a2230'); R(97,4,10,6,'#3a6088');
+  ctx.restore();
+}
+function drawLobbyHallDoor(){
+  R(28,104,34,62,'#6a5238'); R(28,104,34,2,'#8a6e4a'); R(28,164,34,2,'#3a2a18'); R(60,104,2,62,'#3a2a18');
+  R(32,108,26,54,'#7a5e40'); R(48,108,2,54,'#5a4630');
+  R(34,134,3,4,'#d8c060');
+  R(32,150,26,8,'#5a4632'); txt('복도', 45, 156, 5, '#f0e6d2','center');
+}
+function drawLobbyGate(sea,th){
+  // automatic glass front doors below the window
+  R(198,96,84,8,'#8a93a2'); R(198,96,84,2,'#a4adbc');
+  R(202,100,37,16,'#bfe0ec'); R(241,100,37,16,'#bfe0ec');
+  R(202,100,37,3,'#d4ecf4'); R(241,100,37,3,'#d4ecf4');
+  R(239,100,2,16,'#8a93a2');
+  txt('▼ 정문', 240, 112, 5, '#2a3850','center');
+  // green exit sign
+  R(232,90,16,6,'#1a3a24'); txt('EXIT', 240, 95, 4, '#8ee0a0','center');
+}
+function drawLobbyPlant(){
+  ctx.save(); ctx.translate(404,182);
+  R(0,18,18,14,'#caa890'); R(0,18,18,2,'#dcc0a8');
+  for (const [bx,by,r] of [[2,0,10],[9,-3,10],[5,4,9]]){ R(bx,by,r,r,'#3a8a52'); R(bx+2,by,3,3,'#4ea868'); }
+  R(8,4,3,14,'#5a7838');
+  ctx.restore();
+}
+function drawLobbyHud(){
+  R(0,0,W,22,'#2a3850'); R(0,0,W,2,'#3a5680'); R(0,20,W,2,'#16243a');
+  txt('MAIN LOBBY · 정문 로비', 8, 14, 6, '#e6eef6');
+  R(0,H-14,W,14,'#2a3850'); R(0,H-14,W,1,'#3a5680');
+  txt('좌: 복도   ·   정문(위) : 외부 정원으로', W/2, H-4, 6, '#a8c4e0','center');
+}
+
+// ============================================================
+//  FRONT GARDEN (외부 정원) — outdoor courtyard, seasonal + sky
+// ============================================================
+function nearestGardenStation(){
+  let best=null,bd=999;
+  for (const s of GARDEN_STATIONS){
+    const d=Math.hypot(state.gx-s.doorX, state.gy-s.doorY);
+    if (d<24 && d<bd){ bd=d; best=s; }
+  }
+  return best;
+}
+function handleGardenKey(k){
+  if (k===' '||k==='e') gardenInteract();
+  if (k==='r') rest();
+}
+function gardenInteract(){
+  const s=nearestGardenStation(); if(!s) return;
+  if (s.id==='lobbydoor') switchScene('lobby');
+  else if (s.id==='gbench') gardenRest();
+}
+function gardenRest(){
+  if (state.power >= state.maxPower){ speak('self', '🌼 바람이 좋다… 잠깐 산책', 140); return; }
+  state.power = Math.min(state.maxPower, state.power + 35);
+  state.hour += 2;
+  speak('self', '🌳 바깥 공기 — Power +35 (2시간)', 140);
+  spawnFloater(state.gx, state.gy-28, '+35 🌳', C.grnHi, { size:7, life:48 });
+  if (state.hour >= 26){ autoCollapse(); }
+}
+function updateGarden(){
+  roomMove(()=>({x:state.gx,y:state.gy}), (x,y)=>{state.gx=x;state.gy=y;},
+    [GARDEN_LEFT,GARDEN_RIGHT,GARDEN_TOP,GARDEN_BOT], [GARDEN_STATIONS[1], {x:212,y:150,w:56,h:18}]);
+  state.prompt = nearestGardenStation();
+}
+function renderGarden(){
+  const sea=getSeason(), th=SEASON_THEME[sea];
+  // sky (time of day — reuse rooftop sky)
+  const sky=roofSky();
+  const g=ctx.createLinearGradient(0,0,0,150);
+  g.addColorStop(0,'rgb('+sky.top.join(',')+')'); g.addColorStop(1,'rgb('+sky.bot.join(',')+')');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,150);
+  // stars + sun/moon (reuse rooftop helpers)
+  const sa=roofStarAlpha();
+  if (sa>0.02){ ctx.globalAlpha=sa; for (let i=0;i<40;i++){ const x=(i*83)%W, y=(i*51)%110+4; if (0.5+0.5*Math.sin(state.t*0.05+i)>0.55) P(x,y,'#ffffff'); } ctx.globalAlpha=1; }
+  drawRoofSunMoon();
+  drawRoofClouds();
+  // distant fence + seasonal tree line
+  drawGardenSkyline(sea, th);
+  // grounds
+  drawGardenGround(sea, th);
+
+  const ents=[
+    { sortY:118, draw:()=>drawGardenBuilding(sea,th) },
+    { sortY:170, draw:()=>drawGardenBeds(sea,th) },
+    { sortY:176, draw:()=>drawFountain() },
+    { sortY:200, draw:drawGardenBench },
+    { sortY: state.gy+0.5, draw:drawPlayer },
+  ];
+  ents.sort((a,b)=>a.sortY-b.sortY);
+  for (const e of ents) e.draw();
+
+  drawSeasonParticles(sea, th);
+  drawSpeech(); drawGardenHud(sea); drawPrompt(); drawMsg(); drawAchv();
+}
+function drawGardenSkyline(sea, th){
+  // distant hills
+  for (let x=0;x<W;x+=8){ const hh=10+8*Math.sin(x*0.04+2); R(x,128-hh,8,hh+22,dimHex(th.tree,0.5)); }
+  // perimeter hedge / fence near horizon
+  R(0,124,W,8,dimHex(th.tree,0.7)); R(0,124,W,2,dimHex(th.tree,0.9));
+  for (let x=6;x<W;x+=14){ R(x,120,2,12,'#8a7a5a'); }   // fence posts
+}
+function drawGardenGround(sea, th){
+  // grass
+  for (let y=130;y<240;y+=14){
+    for (let x=0;x<W;x+=20){ R(x,y,20,14,((x/20|0)+(y/14|0))&1?'#6aa84e':'#5e9c46'); }
+  }
+  // winter snow blanket
+  if (sea===3){ ctx.globalAlpha=0.82; R(0,130,W,110,'#eef4fa'); ctx.globalAlpha=1; }
+  // stone path from the entrance down into the garden
+  for (let i=0;i<7;i++){ const py=132+i*15; R(64,py,30,12,'#b8b0a0'); R(64,py,30,2,'#c8c0b0'); }
+  R(58,236,300,4,'#a89a82');
+}
+function drawGardenBuilding(sea, th){
+  // company building corner on the left; ground-level entrance back to lobby
+  R(20,108,80,120,'#b8bcc6'); R(20,108,80,3,'#cccfd8'); R(20,108,3,120,'#c4c8d2'); R(97,108,3,120,'#9498a4');
+  // upper windows
+  for (let c=0;c<2;c++){ R(30+c*30,118,20,18,dimHex(th.sky,0.92)); R(30+c*30,118,20,2,'#dfeaf2'); R(39+c*30,118,2,18,'#8a93a2'); }
+  R(16,104,88,5,'#9aa0ac');   // roofline
+  // ground-level entrance → lobby
+  R(34,150,44,60,'#3a4658'); R(36,152,40,58,'#4a5a72');
+  R(38,156,17,52,'#bfe0ec'); R(57,156,17,52,'#bfe0ec'); R(55,156,2,52,'#2a3340');
+  R(34,142,44,8,'#2a3850'); txt('▲ LOBBY', 56, 148, 5, '#cfe0f4','center');
+  R(54,150,4,2,(state.t>>4)&1 ? '#9ee0a8' : '#5a8c64');
+}
+function drawGardenBeds(sea, th){
+  // two seasonal flower beds flanking the path
+  for (const bx of [120, 360]){
+    R(bx,160,60,14,'#6a4a2c'); R(bx,160,60,2,'#7e5a38'); R(bx,172,60,2,'#4a3220');
+    if (sea===0){ for (let i=0;i<7;i++){ const fx=bx+5+i*8; R(fx,153,1,8,'#3a8a3c'); R(fx-2,150,5,4,['#e85a8a','#f0a040','#d04ad0'][i%3]); } }
+    else if (sea===1){ for (let i=0;i<8;i++){ const fx=bx+4+i*7; R(fx,152,2,9,th.tree); } R(bx+24,148,6,6,'#f0c040'); R(bx+25,149,4,4,'#7a5020'); }
+    else if (sea===2){ for (let i=0;i<7;i++){ const fx=bx+5+i*8; R(fx,154,1,7,'#7a5028'); R(fx-2,151,5,4,['#e07828','#d8682c','#e0a020'][i%3]); } }
+    else { for (let i=0;i<5;i++){ const fx=bx+7+i*11; R(fx-3,151,7,10,'#2e6a48'); R(fx-2,149,5,3,'#3a7a54'); R(fx-2,148,5,2,'#ffffff'); } }
+  }
+}
+function drawFountain(){
+  ctx.save(); ctx.translate(212,150);
+  R(0,18,56,16,'#9aa0aa'); R(0,18,56,2,'#b2b8c2'); R(0,32,56,2,'#7a808a');   // basin
+  R(6,20,44,10,'#7fb6d6'); R(6,20,44,2,'#a6d4ea');                            // water
+  R(24,4,8,16,'#9aa0aa');                                                     // pillar
+  R(20,0,16,4,'#b2b8c2');                                                     // top dish
+  // water droplets
+  for (let i=0;i<4;i++){ const ph=(state.t*0.06+i*0.25)%1; P(24+i*3, 4+ph*16|0, '#cdeefb'); }
+  ctx.restore();
+}
+function drawGardenBench(){
+  ctx.save(); ctx.translate(300,182);
+  R(0,8,80,5,'#7a5a3a'); R(0,8,80,1,'#9a7048');
+  R(0,0,80,7,'#8a6644'); R(0,0,80,2,'#a87a4e');
+  for (let i=0;i<5;i++) R(6+i*15,0,1,7,'#6a4a2c');
+  R(4,13,4,8,'#5a4028'); R(72,13,4,8,'#5a4028');
+  ctx.restore();
+}
+function drawGardenHud(sea){
+  R(0,0,W,22,'#2c4a3a'); R(0,0,W,2,'#3a6a4a'); R(0,20,W,2,'#16281e');
+  txt('FRONT GARDEN · 외부 정원', 8, 14, 6, '#d8f0e0');
+  R(300,5,80,13,'#16281e'); R(304,8,8,8,SEASON_THEME[sea].accent);
+  txt(SEASON_AB[sea]+' '+SEASON_KR[sea], 340, 14, 5, SEASON_THEME[sea].accent,'center');
+  txt(clockStr(), 470, 14, 6, clockColor(),'end');
+  R(0,H-14,W,14,'#2c4a3a'); R(0,H-14,W,1,'#3a6a4a');
+  txt('벤치=잠깐 휴식(+35)  ·  건물 입구=로비로  ·  사계절·노을·밤하늘', W/2, H-4, 6, '#a8d0b8','center');
 }
 
 // ============================================================
@@ -4898,13 +5411,30 @@ function drawExitDoor(){
 
 function frame(){
   update();
+  tickJuice();
+
+  // clear full device buffer (so shake gaps show dark, not stale frame)
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle = '#0a0810';
+  ctx.fillRect(0,0,cvs.width,cvs.height);
+  // base 2x scale + screen-shake offset
+  let shx=0, shy=0;
+  if (state.shake > 0){ shx=(Math.random()*2-1)*state.shake; shy=(Math.random()*2-1)*state.shake; }
+  ctx.setTransform(2,0,0,2, shx*2, shy*2);
 
   if (state.scene === 'office') renderOffice();
   else if (state.scene === 'smock') renderSmock();
   else if (state.scene === 'break') renderBreak();
   else if (state.scene === 'rnd') renderRnd();
   else if (state.scene === 'roof') renderRoof();
+  else if (state.scene === 'hall') renderHall();
+  else if (state.scene === 'lobby') renderLobby();
+  else if (state.scene === 'garden') renderGarden();
   else renderFab();
+
+  // world-space juice (over the scene, under modals/fade)
+  drawParticles();
+  drawFloaters();
 
   // scene fade overlay (covers everything, both scenes)
   if (state.fade > 0){
