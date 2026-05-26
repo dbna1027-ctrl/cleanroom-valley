@@ -305,6 +305,10 @@ const state = {
   mining: 0,              // mining swing busy timer
   crafting: 0,            // crafting box busy timer
   oreVein: 100,           // remaining ore richness in the current vein (regenerates)
+  lbx: 240, lby: 196,     // library player position
+  collection: { minerals:{}, defects:{} },   // 도감: discovered id → count
+  compendiumOpen: false,
+  compendiumTab: 0,       // 0 = minerals, 1 = defects
   research: { done:{}, active:null },   // active = { id, daysLeft }
   rndMenuOpen: false,
   rndCursor: 0,
@@ -496,7 +500,7 @@ const SMOCK_STATIONS = [
   { id:'changer',   x:198, y:118, w:84, h:48, prompt:'smock 착용/탈의', doorX:240, doorY:180 },
   { id:'officedoor',x:30,  y:118, w:34, h:46, prompt:'사무실로',       doorX:50,  doorY:172 },
   { id:'fabdoor',   x:416, y:118, w:34, h:46, prompt:'팹으로',         doorX:432, doorY:172 },
-  { id:'craftbox',  x:310, y:118, w:68, h:42, prompt:'웨이퍼 제작',     doorX:344, doorY:174 },
+  { id:'craftbox',  x:298, y:120, w:48, h:34, prompt:'웨이퍼 제작',     doorX:322, doorY:168 },
   { id:'npc',       x:120, y:172, w:14, h:26, prompt:'광수와 대화',     doorX:120, doorY:188 },
 ];
 
@@ -531,6 +535,7 @@ const HALL_TOP = 112, HALL_BOT = 226, HALL_LEFT = 28, HALL_RIGHT = 452;
 const HALL_STATIONS = [
   { id:'officedoor',x:28, y:118, w:34, h:46, prompt:'사무실로',  doorX:46,  doorY:170 },
   { id:'lobbydoor', x:418,y:118, w:34, h:46, prompt:'로비로',    doorX:434, doorY:170 },
+  { id:'librarydoor',x:214,y:74, w:32, h:26, prompt:'도서관으로', doorX:230, doorY:116 },
 ];
 
 // main lobby (정문 로비) — reception + front doors to the outside
@@ -555,6 +560,58 @@ const MINE_STATIONS = [
   { id:'gardendoor', x:416, y:120, w:36,  h:54, prompt:'밖으로 (정원)',      doorX:434, doorY:200 },
 ];
 const ORE_PER_WAFER = 3;   // ore needed to craft one silicon wafer
+
+// library (도서관) — houses the 도감 (compendium)
+const LIB_TOP = 112, LIB_BOT = 226, LIB_LEFT = 28, LIB_RIGHT = 452;
+const LIB_STATIONS = [
+  { id:'halldoor', x:28,  y:118, w:34, h:46, prompt:'복도로',   doorX:46,  doorY:170 },
+  { id:'stand',    x:206, y:150, w:60, h:22, prompt:'도감 열람 (K)', doorX:236, doorY:188 },
+];
+
+// 도감 — collectible minerals (mined) and defect patterns (found in QA)
+const MINERALS = [
+  { id:'silicon',  name:'실리콘 원석', rarity:'흔함',   w:0,  col:'#7fb6d6', desc:'웨이퍼의 주원료.' },
+  { id:'quartz',   name:'석영',       rarity:'흔함',   w:34, col:'#dfeaf2', desc:'맑은 결정질 광물.' },
+  { id:'feldspar', name:'장석',       rarity:'흔함',   w:30, col:'#e8c8a0', desc:'지각에 가장 흔한 광물군.' },
+  { id:'mica',     name:'운모',       rarity:'보통',   w:16, col:'#c8b86a', desc:'얇게 벗겨지는 판상 광물.' },
+  { id:'pyrite',   name:'황철석',     rarity:'보통',   w:12, col:'#d8b048', desc:'금처럼 반짝이는 바보의 금.' },
+  { id:'germanium',name:'게르마늄',   rarity:'희귀',   w:5,  col:'#a0a8b8', desc:'초기 반도체에 쓰인 원소.' },
+  { id:'amethyst', name:'자수정',     rarity:'희귀',   w:4,  col:'#a866c8', desc:'보라색 석영 변종.' },
+  { id:'meteorite',name:'운철',       rarity:'전설',   w:1,  col:'#8a7a9a', desc:'하늘에서 떨어진 철질 운석.' },
+];
+const DEFECTS = [
+  { id:'particle', name:'파티클',       col:'#e0e0e0', desc:'표면에 내려앉은 미세 입자.' },
+  { id:'scratch',  name:'스크래치',     col:'#c0c8d0', desc:'취급 중 생긴 긁힘.' },
+  { id:'void',     name:'보이드',       col:'#3a4654', desc:'박막 내부의 빈 공동.' },
+  { id:'pinhole',  name:'핀홀',         col:'#1a2230', desc:'아주 작은 관통 구멍.' },
+  { id:'bridge',   name:'브리지(단락)', col:'#e07828', desc:'패턴이 붙어 생긴 단락.' },
+  { id:'overlay',  name:'오버레이 오차', col:'#c44830', desc:'층간 정렬이 어긋남.' },
+];
+function weightedMineral(){
+  let tot=0; for (const m of MINERALS) tot+=m.w;
+  let r=Math.random()*tot;
+  for (const m of MINERALS){ r-=m.w; if (r<=0) return m.id; }
+  return 'quartz';
+}
+function discoverMineral(id, n){
+  n = n || 1;
+  const had = state.collection.minerals[id] || 0;
+  state.collection.minerals[id] = had + n;
+  if (had === 0){
+    const m = MINERALS.find(x=>x.id===id);
+    setTimeout(()=>{ toast('📖 새 광물 발견!<br>' + (m?m.name:id) + ' (' + (m?m.rarity:'') + ')<br><small>K: 도감</small>', 2600); }, 150);
+    unlock('MIN_'+id, '📖 광물 수집: ' + (m?m.name:id), 0);
+  }
+}
+function discoverDefect(id){
+  const had = state.collection.defects[id] || 0;
+  state.collection.defects[id] = had + 1;
+  if (had === 0){
+    const d = DEFECTS.find(x=>x.id===id);
+    setTimeout(()=>{ toast('📖 새 불량 패턴 기록!<br>' + (d?d.name:id) + '<br><small>K: 도감</small>', 2400); }, 150);
+    unlock('DEF_'+id, '📖 불량 패턴: ' + (d?d.name:id), 0);
+  }
+}
 
 // R&D research projects — invest Si, complete after N days, permanent effect
 const RND_PROJECTS = [
@@ -615,6 +672,14 @@ window.addEventListener('keydown', e => {
   }
   if (k === 'l' || k === 'j'){ state.questLogOpen = true; return; }
 
+  // Compendium (도감) overlay — openable from any scene with K
+  if (state.compendiumOpen){
+    if (k === 'k' || k === 'escape' || k === 'q') state.compendiumOpen = false;
+    else if (k === 'arrowleft' || k === 'a' || k === 'arrowright' || k === 'd') state.compendiumTab = state.compendiumTab ? 0 : 1;
+    return;
+  }
+  if (k === 'k'){ state.compendiumOpen = true; state.compendiumTab = 0; return; }
+
   // NPC dialogue box — closes on confirm, openable from any scene
   if (state.npcDialog){
     if (k === ' ' || k === 'e' || k === 'enter' || k === 'escape') state.npcDialog = null;
@@ -654,6 +719,8 @@ window.addEventListener('keydown', e => {
   if (state.scene === 'garden'){ handleGardenKey(k); return; }
   // Silicon mine input
   if (state.scene === 'mine'){ handleMineKey(k); return; }
+  // Library input
+  if (state.scene === 'library'){ handleLibraryKey(k); return; }
 
   // Shop modal swallows most input
   if (state.shopOpen){
@@ -768,8 +835,12 @@ function doSceneSwitch(target){
     speak('self', SEASON_KR[getSeason()] + ' 옥상 정원', 130);
   } else if (target === 'hall'){
     if (from === 'lobby'){ state.hx = 410; state.hy = 178; state.pdir = 'left'; }
+    else if (from === 'library'){ state.hx = 230; state.hy = 124; state.pdir = 'down'; }
     else { state.hx = 70; state.hy = 178; state.pdir = 'right'; }
     speak('self', '복도', 100);
+  } else if (target === 'library'){
+    state.lbx = 70; state.lby = 178; state.pdir = 'right';
+    speak('self', '도서관', 110);
   } else if (target === 'lobby'){
     if (from === 'garden'){ state.lx = 240; state.ly = 132; state.pdir = 'down'; }
     else { state.lx = 70; state.ly = 178; state.pdir = 'right'; }
@@ -1167,7 +1238,7 @@ function startQA(){
     const y = QA_CY + Math.sin(ang) * rad;
     // keep them apart so clicks aren't ambiguous
     if (defects.some(d => Math.hypot(d.x-x, d.y-y) < 18)) continue;
-    defects.push({ x, y, r: 3 + Math.random()*2, found:false, ph: Math.random()*6.28 });
+    defects.push({ x, y, r: 3 + Math.random()*2, found:false, ph: Math.random()*6.28, type: DEFECTS[(Math.random()*DEFECTS.length)|0].id });
   }
   state.qaGame = { defects, found:0, total:defects.length, timeLeft:QA_TIME, result:null, lockedAt:0, ripple:null };
 }
@@ -1184,6 +1255,7 @@ function qaClick(lx, ly){
       d.found = true;
       g.found++;
       g.ripple.hit = true;
+      discoverDefect(d.type);
       if (g.found >= g.total) qaResolve();
       return;
     }
@@ -1707,6 +1779,7 @@ function update(){
   tickFade();
   if (state.ending) return;   // freeze the world behind the ending screen
   if (state.questLogOpen){ state.pmove=false; state.pwalk=0; return; }  // quest log pauses the world
+  if (state.compendiumOpen){ state.pmove=false; state.pwalk=0; return; }  // 도감 pauses the world
   if (state.npcDialog){ state.pmove=false; state.pwalk=0; return; }     // dialogue pauses the world
   tickClock();
   tickAchv();
@@ -1725,6 +1798,7 @@ function update(){
   if (state.scene === 'lobby'){ updateLobby(); return; }
   if (state.scene === 'garden'){ updateGarden(); return; }
   if (state.scene === 'mine'){ updateMine(); return; }
+  if (state.scene === 'library'){ updateLibrary(); return; }
 
   // tick auxiliary systems (combo/rush pause during shop, minigame still resolves)
   tickMiniGame();
@@ -2306,6 +2380,7 @@ function drawPlayer(){
   else if (state.scene === 'lobby'){ fx = state.lx; fy = state.ly; }
   else if (state.scene === 'garden'){ fx = state.gx; fy = state.gy; }
   else if (state.scene === 'mine'){ fx = state.mx2; fy = state.my2; }
+  else if (state.scene === 'library'){ fx = state.lbx; fy = state.lby; }
   else { fx = state.sx; fy = state.sy; }   // smock room
   const x = (fx - 7) | 0;
   const y = (fy - 26) | 0;
@@ -2491,6 +2566,7 @@ function drawSpeech(){
   else if (state.scene === 'lobby'){ pfx = state.lx; pfy = state.ly; }
   else if (state.scene === 'garden'){ pfx = state.gx; pfy = state.gy; }
   else if (state.scene === 'mine'){ pfx = state.mx2; pfy = state.my2; }
+  else if (state.scene === 'library'){ pfx = state.lbx; pfy = state.lby; }
   else { pfx = state.sx; pfy = state.sy; }
   const px = s.who === 'npc' ? 319 : (pfx|0);
   const py = s.who === 'npc' ? 180 : (pfy - 32);
@@ -4271,8 +4347,8 @@ function updateSmock(){
       state.carryQA = null;
       const tag = state.carryQ===1 ? 'Good 웨이퍼 완성!' : '실리콘 웨이퍼 완성';
       speak('self', '🟢 ' + tag + ' — smock 착용 후 팹으로', 170);
-      spawnFloater(344, 150, tag, state.carryQ===1?C.grnHi:'#dfeaf2', { size:7, life:52 });
-      spawnBurst(344, 154, ['#cfe8f4','#bfe0ec','#fff2bc'], 12, { spd:1.5, up:0.5 });
+      spawnFloater(322, 150, tag, state.carryQ===1?C.grnHi:'#dfeaf2', { size:7, life:52 });
+      spawnBurst(322, 154, ['#cfe8f4','#bfe0ec','#fff2bc'], 12, { spd:1.5, up:0.5 });
       addShake(1.6);
       unlock('FIRST_CRAFT', '🛠 첫 웨이퍼 제작!', 0);
       if (state.hour >= 26){ autoCollapse(); return; }
@@ -4345,7 +4421,7 @@ function renderSmock(){
   for (const e of ents) e.draw();
 
   drawSpeech();
-  if (state.crafting>0) drawBusyBar(344, 138, 1 - state.crafting/46, '🛠 제작 중', '#9ee0a8');
+  if (state.crafting>0) drawBusyBar(322, 138, 1 - state.crafting/46, '🛠 제작 중', '#9ee0a8');
   drawSmockHud();
   drawPrompt();
   drawMsg();
@@ -4460,22 +4536,21 @@ function drawSmockFabDoor(){
 }
 
 function drawSmockCraftBox(){
-  // wafer fabrication unit (turns mined silicon into a clean wafer before entering the fab)
-  ctx.save(); ctx.translate(310,118);
-  R(0,4,68,42,'#46505e'); R(0,4,68,3,'#5a6472'); R(0,44,68,2,'#2e3640');
-  // furnace mouth glows while crafting
+  // compact wafer fabrication unit (silicon → clean wafer before entering the fab)
+  ctx.save(); ctx.translate(298,120);
+  R(0,4,48,30,'#46505e'); R(0,4,48,2,'#5a6472'); R(0,32,48,2,'#2e3640');
   const hot = state.crafting > 0;
-  R(8,14,28,22,'#1a2028'); R(10,16,24,18, hot ? (((state.t>>2)&1)?'#ff8a3a':'#e0641c') : '#26303a');
-  if (hot){ for (let i=0;i<4;i++){ P(13+i*6, 16+((state.t+i*3)%16), '#ffd060'); } }
-  // output tray with a sample wafer
-  R(44,18,18,12,'#2a323c'); R(46,20,14,8,'#6fb6d6'); R(46,20,14,2,'#a6d4ea');
+  R(5,11,18,16,'#1a2028'); R(7,13,14,12, hot ? (((state.t>>2)&1)?'#ff8a3a':'#e0641c') : '#26303a');
+  if (hot){ for (let i=0;i<3;i++){ P(9+i*5, 13+((state.t+i*3)%11), '#ffd060'); } }
+  // output tray with sample wafer
+  R(28,13,14,9,'#2a323c'); R(30,15,10,5,'#6fb6d6'); R(30,15,10,1,'#a6d4ea');
   // control panel
-  R(44,8,18,7,'#2a323c'); R(47,10,4,3,hot?'#9ee0a8':'#3a4654'); R(53,10,4,3,C.badge);
-  // hopper showing silicon feedstock
-  R(8,-6,20,10,'#2a323c'); for (let i=0;i<3;i++) R(10+i*6,-4,4,4,'#5aa8c8');
-  R(2,46,8,8,'#3a4452'); R(58,46,8,8,'#3a4452');   // legs
+  R(28,6,14,5,'#2a323c'); R(30,7,3,2,hot?'#9ee0a8':'#3a4654'); R(35,7,3,2,C.badge);
+  // silicon hopper
+  R(5,-3,14,7,'#2a323c'); for (let i=0;i<2;i++) R(7+i*5,-1,3,3,'#5aa8c8');
+  R(2,34,6,5,'#3a4452'); R(40,34,6,5,'#3a4452');   // legs
   ctx.restore();
-  txt('웨이퍼 제작기', 344, 168, 5, '#a8c4e0', 'center');
+  txt('웨이퍼 제작기', 322, 160, 5, '#a8c4e0', 'center');
 }
 function drawSmockHud(){
   // slim top bar
@@ -5172,6 +5247,7 @@ function hallInteract(){
   const s=nearestHallStation(); if(!s) return;
   if (s.id==='officedoor') switchScene('office');
   else if (s.id==='lobbydoor') switchScene('lobby');
+  else if (s.id==='librarydoor') switchScene('library');
 }
 function updateHall(){
   roomMove(()=>({x:state.hx,y:state.hy}), (x,y)=>{state.hx=x;state.hy=y;},
@@ -5198,6 +5274,7 @@ function renderHall(){
   const ents=[
     { sortY:164, draw:drawHallOfficeDoor },
     { sortY:164, draw:drawHallLobbyDoor },
+    { sortY:101, draw:drawHallLibraryDoor },
     { sortY:206, draw:drawHallPlant },
     { sortY: state.hy+0.5, draw:drawPlayer },
   ];
@@ -5226,11 +5303,19 @@ function drawHallPlant(){
   R(7,4,3,14,'#5a7838');
   ctx.restore();
 }
+function drawHallLibraryDoor(){
+  // door on the back wall → library
+  R(214,74,32,28,'#5a4632'); R(214,74,32,2,'#74563a'); R(214,100,32,2,'#3a2a18');
+  R(214,74,2,28,'#74563a'); R(244,74,2,28,'#3a2a18');
+  R(218,77,24,22,'#6a523a'); R(229,77,2,22,'#4e3a26');
+  R(221,86,2,3,'#d8c060');
+  R(216,93,28,6,'#3a4860'); txt('도서관', 230, 98, 4, '#cfe0f4', 'center');
+}
 function drawHallHud(){
   R(0,0,W,22,'#5a4632'); R(0,0,W,2,'#7a5e42'); R(0,20,W,2,'#3a2a18');
   txt('CORRIDOR · 복도', 8, 14, 6, '#f0e6d2');
   R(0,H-14,W,14,'#5a4632'); R(0,H-14,W,1,'#7a5e42');
-  txt('좌: 사무실   ·   우: 정문 로비', W/2, H-4, 6, '#d8c8aa','center');
+  txt('좌: 사무실   ·   우: 정문 로비   ·   위: 도서관', W/2, H-4, 6, '#d8c8aa','center');
 }
 
 // ============================================================
@@ -5530,6 +5615,16 @@ function updateMine(){
       spawnBurst(112, 176, rich?['#7ce0f0','#bfe0ec','#ffffff']:['#9a8e7e','#b8ac98','#d8d0c0'], rich?15:9, { spd:1.5, up:0.4 });
       addShake(rich?2.6:1.3);
       if (rich) unlock('RICH_VEIN', '💎 노다지! 풍부한 광맥', 0);
+      // 도감: log silicon + a chance at a rarer specimen
+      discoverMineral('silicon', gain);
+      if (Math.random() < 0.4){
+        const mid = weightedMineral();
+        discoverMineral(mid);
+        const mm = MINERALS.find(x=>x.id===mid);
+        const bonus = mm && (mm.rarity==='희귀'||mm.rarity==='전설') ? 20 : 5;
+        state.krw += bonus;
+        spawnFloater(112, 160, (mm?mm.name:'표본') + ' +' + bonus + '₩', mm?mm.col:'#cfe8f4', { size:6, life:44 });
+      }
       if (state.hour >= 26){ autoCollapse(); return; }
     }
   }
@@ -5628,6 +5723,182 @@ function drawMineHud(){
 }
 
 // ============================================================
+//  LIBRARY (도서관) + 도감 (compendium)
+// ============================================================
+function nearestLibStation(){
+  let best=null,bd=999;
+  for (const s of LIB_STATIONS){
+    const d=Math.hypot(state.lbx-s.doorX, state.lby-s.doorY);
+    if (d<24 && d<bd){ bd=d; best=s; }
+  }
+  return best;
+}
+function handleLibraryKey(k){
+  if (k===' '||k==='e') libraryInteract();
+  if (k==='r') rest();
+}
+function libraryInteract(){
+  const s=nearestLibStation(); if(!s) return;
+  if (s.id==='halldoor') switchScene('hall');
+  else if (s.id==='stand'){ state.compendiumOpen = true; state.compendiumTab = 0; }
+}
+function updateLibrary(){
+  roomMove(()=>({x:state.lbx,y:state.lby}), (x,y)=>{state.lbx=x;state.lby=y;},
+    [LIB_LEFT,LIB_RIGHT,LIB_TOP,LIB_BOT], [LIB_STATIONS[1]]);
+  state.prompt = nearestLibStation();
+}
+function renderLibrary(){
+  R(0,0,W,H,'#2e2438');
+  // warm wood-panelled wall
+  R(0,22,W,80,'#5a4636'); R(0,22,W,2,'#6e5742'); R(0,100,W,2,'#3a2c20');
+  for (let x=0;x<W;x+=40){ R(x,24,1,76,'#4e3e30'); }
+  // tall bookshelves along the back wall
+  for (let bx=20;bx<W-20;bx+=72){
+    R(bx,28,64,70,'#3a2c1e'); R(bx,28,64,2,'#4e3a28');
+    for (let row=0;row<4;row++){
+      const ry=32+row*17;
+      R(bx+2,ry+13,60,3,'#2a1f14');                 // shelf
+      for (let i=0;i<14;i++){
+        const bh=8+((bx+i*7+row*3)%6);
+        R(bx+3+i*4, ry+14-bh, 3, bh, ['#8a4030','#3a6a8a','#7a6a2a','#4a7a4a','#7a3a6a','#a86a30'][(bx+i+row)%6]);
+      }
+    }
+  }
+  R(0,98,W,4,'#3a2c20');
+  // sign
+  R(196,30,88,18,'#2a3850'); txt('LIBRARY · 도서관', 240, 41, 5, '#cfe0f4','center');
+  // carpet floor
+  for (let y=102;y<240;y+=16){
+    for (let x=0;x<W;x+=32){ R(x,y,32,16,((x/32|0)+(y/16|0))&1?'#5a3a3a':'#523434'); R(x,y,32,1,'#4a2e2e'); }
+  }
+  R(150,160,200,56,'#6a4848'); R(150,160,200,2,'#7e5656');   // central rug
+
+  const ents=[
+    { sortY:172, draw:drawCompendiumStand },
+    { sortY:164, draw:drawLibHallDoor },
+    { sortY:150, draw:()=>drawReadingDesk(120) },
+    { sortY:150, draw:()=>drawReadingDesk(360) },
+    { sortY: state.lby+0.5, draw:drawPlayer },
+  ];
+  ents.sort((a,b)=>a.sortY-b.sortY);
+  for (const e of ents) e.draw();
+
+  drawDayNightTint();
+  drawSpeech(); drawLibraryHud(); drawPrompt(); drawMsg(); drawAchv();
+}
+function drawReadingDesk(cx){
+  ctx.save(); ctx.translate(cx,142);
+  R(0,12,46,5,'#5a4030'); R(0,12,46,1,'#6e5040');         // table top
+  R(3,17,4,8,'#4a3424'); R(39,17,4,8,'#4a3424');          // legs
+  // a green banker's lamp
+  R(34,2,4,10,'#caa030'); R(30,0,12,5,'#2e6a48'); R(30,0,12,2,'#3a8a5e');
+  ctx.globalAlpha=0.4; R(28,5,16,8,'#9ee0a8'); ctx.globalAlpha=1;
+  // open book
+  R(6,8,16,5,'#e8e0cc'); R(6,8,8,5,'#d8d0bc'); R(13,7,2,7,'#9a8a6a');
+  ctx.restore();
+}
+function drawCompendiumStand(){
+  // a lectern holding the open 도감
+  ctx.save(); ctx.translate(206,150);
+  R(24,18,12,12,'#4a3424');                                // pedestal
+  R(20,28,20,3,'#3a281a');
+  R(2,4,56,16,'#5a4030'); R(2,4,56,2,'#6e5040');           // slanted top
+  // open book glowing
+  R(8,2,20,11,'#efe7d2'); R(30,2,20,11,'#e6dcc4');
+  R(28,1,2,12,'#8a7656');
+  ctx.globalAlpha=0.35 + 0.15*Math.sin(state.t*0.08); R(8,-2,42,5,'#fff2bc'); ctx.globalAlpha=1;
+  // tiny text lines
+  for (let i=0;i<3;i++){ R(10,5+i*3,16,1,'#b8a888'); R(32,5+i*3,16,1,'#b8a888'); }
+  ctx.restore();
+  txt('도감 (K)', 236, 196, 5, '#cfb88a', 'center');
+}
+function drawLibHallDoor(){
+  R(28,104,34,62,'#5a4632'); R(28,104,34,2,'#74563a'); R(28,164,34,2,'#3a2a18'); R(60,104,2,62,'#3a2a18');
+  R(32,108,26,54,'#6a523a'); R(48,108,2,54,'#4e3a26');
+  R(34,134,3,4,'#d8c060');
+  R(32,150,26,8,'#3a4860'); txt('복도', 45, 156, 5, '#cfe0f4','center');
+}
+function drawLibraryHud(){
+  R(0,0,W,22,'#3a2c1e'); R(0,0,W,2,'#5a4632'); R(0,20,W,2,'#241a10');
+  txt('LIBRARY · 도서관', 8, 14, 6, '#f0e0c4');
+  // collection progress
+  const mN=Object.keys(state.collection.minerals).length, dN=Object.keys(state.collection.defects).length;
+  txt('광물 ' + mN + '/' + MINERALS.length + '   불량 ' + dN + '/' + DEFECTS.length, 472, 14, 5, '#cfb88a', 'end');
+  R(0,H-14,W,14,'#3a2c1e'); R(0,H-14,W,1,'#5a4632');
+  txt('열람대=도감 열기 (K로도 가능)  ·  좌:복도', W/2, H-4, 6, '#cfb88a','center');
+}
+
+// ---- 도감 modal ----
+function drawCompendium(){
+  if (!state.compendiumOpen) return;
+  ctx.fillStyle='rgba(14,10,8,0.84)'; ctx.fillRect(0,0,W,H);
+  const mw=400, mh=242, mx=(W-mw)/2, my=(H-mh)/2;
+  R(mx-3,my-3,mw+6,mh+6,'#8a6a3a');
+  R(mx,my,mw,mh,'#f4ecd4'); R(mx,my,mw,3,'#fff8e8'); R(mx,my+mh-3,mw,3,'#c8bca0');
+  txt('📖 도감', mx+mw/2, my+17, 8, '#3a2818', 'center');
+  // tabs
+  const tabs=['광물', '불량 패턴'];
+  for (let i=0;i<2;i++){
+    const tw=80, tx=mx+16+i*(tw+8), ty=my+24;
+    const on=state.compendiumTab===i;
+    R(tx,ty,tw,15, on?'#8a6a3a':'#d8ccb0'); R(tx,ty,tw,1, on?'#a88a50':'#e8dcc0');
+    txt(tabs[i], tx+tw/2, ty+11, 6, on?'#fff8e8':'#7a6a4a', 'center');
+  }
+  txt('← → 탭', mx+mw-16, my+34, 5, '#9a8666', 'end');
+  R(mx+12,my+42,mw-24,1,'#d8ccb0');
+
+  if (state.compendiumTab===0) drawCompMinerals(mx,my+48,mw,mh-66);
+  else drawCompDefects(mx,my+48,mw,mh-66);
+
+  txt('K / Esc 닫기', mx+mw/2, my+mh-8, 5, '#9a7850', 'center');
+}
+function drawCompMinerals(mx,my,mw,mh){
+  const cols=4, cw=(mw-24)/cols, ch=42;
+  for (let i=0;i<MINERALS.length;i++){
+    const m=MINERALS[i];
+    const cx=mx+12+(i%cols)*cw, cy=my+Math.floor(i/cols)*ch;
+    const cnt=state.collection.minerals[m.id]||0, found=cnt>0;
+    R(cx+2,cy+2,cw-6,ch-6, found?'#ece0c4':'#ddd0b4'); R(cx+2,cy+2,cw-6,1,'#fff4dc');
+    // icon
+    if (found) drawMineralIcon(cx+16,cy+18,m); else { R(cx+10,cy+10,14,14,'#c4b896'); txt('?', cx+17,cy+22,8,'#9a8666','center'); }
+    txt(found?m.name:'???', cx+30, cy+14, 5, found?'#3a2818':'#9a8666');
+    txt(found?m.rarity:'미발견', cx+30, cy+24, 4, found?(m.rarity==='전설'?'#c44830':m.rarity==='희귀'?'#a866c8':'#7a6a4a'):'#b0a080');
+    if (found && cnt>0) txt('x'+cnt, cx+cw-12, cy+30, 5, '#8a6a3a', 'end');
+  }
+}
+function drawCompDefects(mx,my,mw,mh){
+  const cols=3, cw=(mw-24)/cols, ch=44;
+  for (let i=0;i<DEFECTS.length;i++){
+    const d=DEFECTS[i];
+    const cx=mx+12+(i%cols)*cw, cy=my+Math.floor(i/cols)*ch;
+    const cnt=state.collection.defects[d.id]||0, found=cnt>0;
+    R(cx+2,cy+2,cw-6,ch-6, found?'#ece0c4':'#ddd0b4'); R(cx+2,cy+2,cw-6,1,'#fff4dc');
+    if (found) drawDefectIcon(cx+18,cy+20,d); else { R(cx+11,cy+12,16,16,'#c4b896'); txt('?', cx+19,cy+25,8,'#9a8666','center'); }
+    txt(found?d.name:'???', cx+34, cy+16, 5, found?'#3a2818':'#9a8666');
+    if (found){ txt(d.desc, cx+34, cy+26, 4, '#7a6a4a'); txt('x'+cnt, cx+cw-12, cy+34, 5, '#8a6a3a', 'end'); }
+    else txt('미발견', cx+34, cy+26, 4, '#b0a080');
+  }
+}
+function drawMineralIcon(cx,cy,m){
+  // a faceted crystal in the mineral's colour
+  R(cx-5,cy-6,10,12,m.col); R(cx-5,cy-6,10,3,'#ffffff');
+  ctx.globalAlpha=0.25; R(cx-5,cy-6,10,3,'#fff'); ctx.globalAlpha=1;
+  R(cx-3,cy-9,6,4,m.col); R(cx-2,cy-10,4,2,'#ffffff');
+  R(cx-5,cy+4,10,2,'#000000'); ctx.globalAlpha=0.2; R(cx-5,cy+4,10,2,'#000'); ctx.globalAlpha=1;
+  P(cx-2,cy-3,'#ffffff');
+}
+function drawDefectIcon(cx,cy,d){
+  // a wafer chip with the defect rendered on it
+  R(cx-8,cy-8,16,16,'#26303a'); R(cx-7,cy-7,14,14,'#3a5868'); R(cx-7,cy-7,14,2,'#4a6878');
+  if (d.id==='particle'){ R(cx-1,cy-1,3,3,d.col); P(cx-4,cy+2,d.col); P(cx+3,cy-3,d.col); }
+  else if (d.id==='scratch'){ R(cx-6,cy+4,12,1,d.col); R(cx-4,cy-2,8,1,d.col); }
+  else if (d.id==='void'){ R(cx-2,cy-2,5,5,d.col); }
+  else if (d.id==='pinhole'){ P(cx,cy,d.col); P(cx+2,cy-2,d.col); }
+  else if (d.id==='bridge'){ R(cx-5,cy-1,10,2,d.col); }
+  else { R(cx-6,cy-6,12,2,d.col); R(cx-6,cy+1,12,2,d.col); }   // overlay misalign
+}
+
+// ============================================================
 //  MAIN LOOP
 // ============================================================
 
@@ -5721,6 +5992,7 @@ function frame(){
   else if (state.scene === 'lobby') renderLobby();
   else if (state.scene === 'garden') renderGarden();
   else if (state.scene === 'mine') renderMine();
+  else if (state.scene === 'library') renderLibrary();
   else renderFab();
 
   // world-space juice (over the scene, under modals/fade)
@@ -5735,6 +6007,8 @@ function frame(){
 
   // quest log overlay
   drawQuestLog();
+  // 도감 overlay
+  drawCompendium();
   // NPC dialogue box
   drawNpcDialog();
 
