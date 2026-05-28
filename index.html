@@ -148,7 +148,25 @@ const C = {
 // pixel rect helper
 function R(x,y,w,h,col){ ctx.fillStyle = col; ctx.fillRect(x|0,y|0,w|0,h|0); }
 function P(x,y,col){ ctx.fillStyle = col; ctx.fillRect(x|0,y|0,1,1); }
+const TR_PAIRS = [["벤치=사색(Power +55, 3시간)  ·  계단=휴게실로  ·  사계절·노을·밤하늘을 즐겨요","Bench=Meditate(Power +55, 3h)  ·  Stairs=Break room  ·  Enjoy the seasons, sunsets & night sky"],["이동 WASD  ·  Space 책상=업무 / 문=탈의실  ·  B 가구상점  ·  R 휴식","Move WASD  ·  Space: Desk=Work / Door=Gowning  ·  B Furniture shop  ·  R Rest"],["소파=휴식(+Power, 2시간)  ·  자판기=40₩ 에너지드링크  ·  문=사무실","Sofa=Rest(+Power, 2h)  ·  Vending=40₩ energy drink  ·  Door=Office"],["광맥=채굴해서 실리콘 비축  ·  웨이퍼 제작은 탈의실에서  ·  갱도=정원으로","Vein=Mine & stock silicon  ·  Craft wafers in the gowning room  ·  Adit=To garden"],["벤치=잠깐 휴식(+35)  ·  건물 입구=로비로  ·  사계절·노을·밤하늘","Bench=Quick rest(+35)  ·  Entrance=Lobby  ·  Seasons, sunset, night sky"],["단말기=연구 프로젝트  ·  문=사무실  ·  연구는 휴식(R)마다 진행","Terminal=Research  ·  Door=Office  ·  Research advances on every rest(R)"],["Tip: 각 장소의 NPC에게 말 걸고 퀘스트 받기 · L = 퀘스트 창","Tip: talk to the NPC in each room for quests · L = Quest log"],["🌿 사색 — 마음이 맑아짐 (Power +55, Esc 일어서기)","🌿 Meditating — mind clears (Power +55, Esc to stand)"],["좌: 사무실   ·   우: 정문 로비   ·   위: 도서관","Left: Office   ·   Right: Lobby   ·   Up: Library"],["각 장소의 NPC에게 말 걸어 보상 수령 · L/Esc 닫기","Talk to NPCs to claim rewards · L/Esc to close"],["🌇 경치가 좋다… 잠시 앉아 쉰다 (Esc 일어서기)","🌇 What a view… sit a while (Esc to stand)"],["↑↓ 선택   Enter 구매   B / Esc 닫기","↑↓ Select   Enter Buy   B / Esc Close"],[")<br><small>L: 퀘스트 창</small>",")<br><small>L: Quest log</small>"],["Space 로 정지 — 중앙(녹색)이 PERFECT","Press Space to stop — center (green) is PERFECT"],["↑↓ 선택   Enter 연구 시작   Esc 닫기","↑↓ Select   Enter Start research   Esc Close"],["↑↓ 선택   Enter 구매   B/Esc 닫기","↑↓ Select   Enter Buy   B/Esc Close"],["좌: 복도   ·   정문(위) : 외부 정원으로","Left: Corridor   ·   Front (up): out to the garden"],["열람대=도감 열기 (K로도 가능)  ·  좌:복도","Lectern=Open compendium (or K)  ·  Left: Corridor"],["⚠ FAB 입장 불가 — smock을 착용하세요","⚠ Can't enter the FAB — put on your smock"],["🌳 바깥 공기 — Power +35 (2시간)","🌳 Fresh air — Power +35 (2h)"],[")<br><small>K: 도감</small>",")<br><small>K: Compendium</small>"],["Photoresist 부족! Shop에서 구매","Out of Photoresist! Buy it at the shop"],["R / Space — 계속 플레이 (엔드리스)","R / Space — keep playing (endless)"],["⚠ 사무실 입장 불가 — smock을 벗으세요","⚠ Can't enter the office — take off your smock"],["<br><small>K: 도감</small>","<br><small>K: Compendium</small>"],["🔧 Wrench 없음 — Shop에서 구매","🔧 No Wrench — buy it at the shop"],["⭐ Grade A — 무결점! 단가 +50%","⭐ Grade A — flawless! price +50%"],["SILICON QUARRY · 실리콘 채석장","SILICON QUARRY"],["☕ Coffee 없음 — Shop에서 구매","☕ No Coffee — buy it at the shop"],["🔬 QA 검사 — 결함을 찾아 클릭하세요","🔬 QA — find and click the defects"],["☕ 재충전 — Power +45 (2시간)","☕ Recharge — Power +45 (2h)"],["🎭 Mask 없음 — Shop에서 구매","🎭 No Mask — buy it at the shop"],["QA: 완성품(etched)만 검사 가능","QA: only finished (etched) wafers"],["Lv.5 GIGAFAB 달성 · Day ","Reached Lv.5 GIGAFAB · Day "],["ROOFTOP GARDEN · 옥상 정원","ROOFTOP GARDEN"],["Etchant 부족! Shop에서 구매","Out of Etchant! Buy it at the shop"],["🎭 다음 캘리브 PERFECT 보장!","🎭 Next calibration guaranteed PERFECT!"],["의뢰는 다 끝났어요. 늘 고마워요 😊","All requests are done. Thanks as always 😊"],["오늘 업무 완료 — 휴식(R) 후 다시","Day's work done — rest (R) to continue"],["판단: 승인 / 반려 / 보류 중 택1","Decide: Approve / Reject / Hold — pick 1"],["락커=smock  ·  제작기=실리콘 ","Locker=smock  ·  Fabricator=silicon "],["개로 웨이퍼  ·  좌:사무실  우:팹"," to a wafer  ·  Left: Office  Right: Fab"],["🥤 에너지드링크 — Power +30","🥤 Energy drink — Power +30"],["미인증 — 결함 다수 (보너스 없음)","Uncertified — too many defects (no bonus)"],["🏭 FAB 등급 상승!<br>Lv.","🏭 FAB level up!<br>Lv."],["<br><small>출하 기본 단가 ","<br><small>Base ship price "],["FRONT GARDEN · 외부 정원","FRONT GARDEN"],["😴 너무 늦었다... 다음날 아침","😴 Too late... next morning"],["캘리브 PERFECT 존 영구 확장","Permanently widens the calibration PERFECT zone"],["웨이퍼 없음 — FOUP에서 꺼내기","No wafer — take one from the FOUP"],["🚨 Rush 성공! +30 보너스","🚨 Rush success! +30 bonus"],["Litho 완료 (PERFECT!)","Litho done (PERFECT!)"],["업무 일시중지 — 책상에서 이어하기","Work paused — resume at the desk"],["🌙 밤이 깊었어요 — R로 휴식","🌙 It's late — rest with R"],["📖 새 불량 패턴 기록!<br>","📖 New defect pattern logged!<br>"],["장비 Power 소모 30% 감소","Equipment uses 30% less Power"],["Etch 완료 (PERFECT!)","Etch done (PERFECT!)"],["마우스로 클릭  ·  Esc 종료","Click with the mouse  ·  Esc to quit"],["MAIN LOBBY · 정문 로비","MAIN LOBBY"],["캘리브 마커 속도 감소(쉬워짐)","Slower calibration marker (easier)"],["이미 들고 있음 — Q로 버리기","Already carrying — drop it with Q"],["🔬 R&D 연구 완료!<br>","🔬 R&D research done!<br>"],["Grade B — 단가 +20%","Grade B — price +20%"],["Day 28 — 첫 해를 마치며","Day 28 — closing the first year"],[" — smock 착용 후 팹으로"," — gown up, then to the fab"],["smock 착용 (FAB OK)","smock on (FAB OK)"],["광맥이 고갈됨 — 잠시 후 회복","Vein depleted — recovers shortly"],["손 비워야 함 — Q로 버리기","Empty your hands — drop with Q"],["Exposed wafer 필요","Need an exposed wafer"],["SCRAP! 캘리브레이션 실패","SCRAP! Calibration failed"],["노광/식각 PERFECT 5회","5× PERFECT litho/etch"],["방진복 착용 후 팹 출입 4회","Enter the fab gowned 4×"],["⭐ PERFECT! +1 등급","⭐ PERFECT! +1 grade"],["BREAK ROOM · 휴게실","BREAK ROOM"],["🌼 바람이 좋다… 잠깐 산책","🌼 Nice breeze… a short walk"],["손이 차 있음 — Q로 버리기","Hands are full — drop with Q"],["금처럼 반짝이는 바보의 금.","Glitters like gold — fool's gold."],["하늘에서 떨어진 철질 운석.","An iron meteorite fallen from the sky."],["표면에 내려앉은 미세 입자.","A fine particle settled on the surface."],["📖 새 광물 발견!<br>","📖 New mineral found!<br>"],["Power 부족! R로 휴식","Low Power! Rest with R"],["  — Litho 자동 소모","  — auto-consumed by Litho"],["빈 슬롯 — 차후 해금 예정","Empty slot — unlocks later"],["R&D 연구 누적 3개 완료","Complete 3 R&D projects"],["📈 완벽 결재! (6/6)","📈 Perfect approvals! (6/6)"],["평상복 (OFFICE OK)","casual wear (OFFICE OK)"],["캘리브 PERFECT 힌트","Calibration PERFECT hint"],["지각에 가장 흔한 광물군.","The most common mineral group in the crust."],["얇게 벗겨지는 판상 광물.","A sheet mineral that peels into thin layers."],["초기 반도체에 쓰인 원소.","An element used in early semiconductors."],["출하 기본 단가 영구 +4","Base ship price permanently +4"],["완성품(etched) 필요","Need a finished (etched) wafer"],["🌧 오늘은 비가 내립니다","🌧 It's raining today"],["  — Etch 자동 소모","  — auto-consumed by Etch"],["PERFECT 누적 15회","15× PERFECT total"],["에게 보고 완료!<br>+"," — reported!<br>+"],["오늘도 좋은 수율 내봐요!","Have a great yield today!"],["버프 없음 (정확도 부족)","No buff (accuracy too low)"],["🥼 smock 착용 완료","🥼 Smock on"],["사무실 (smock 탈의)","Office (take off smock)"],["KRW 부족 (40 필요)","Not enough KRW (need 40)"],["🔬 R&D 연구 프로젝트","🔬 R&D research projects"],["🌸 옥상에서 한숨 돌리기","🌸 A breather on the rooftop"],["💎 노다지! 풍부한 광맥","💎 Jackpot! A rich vein"],["매일 보너스 +20 Si","+20 Si bonus every day"],["패턴이 붙어 생긴 단락.","A short caused by patterns merging."],["탈의실 (Gowning)","Gowning Room"],["Raw wafer 획득!","Got a raw wafer!"],["❄ 오늘은 눈이 내립니다","❄ It's snowing today"],["이미 검사 완료된 웨이퍼","This wafer is already inspected"],["🔬 QA 무결점 검사!","🔬 Flawless QA inspection!"],["✅ 퀘스트 완료!<br>","✅ Quest complete!<br>"],["」 달성 🎉\\n보상 +","」 done 🎉\nReward +"],["국내 최대 기가팹 완공!","The nation's largest gigafab is complete!"],["개  ·  FAB Lv.","  ·  FAB Lv."],["인력 충분 — 승인 적정","Enough staff — approving is fine"],["오늘 출하 보상 +25%","+25% ship reward today"],["오늘 출하 보상 +10%","+10% ship reward today"],["Power가 이미 가득함","Power is already full"],["R&D LAB · 연구소","R&D LAB"],["CORRIDOR · 복도","CORRIDOR"],["LIBRARY · 도서관","LIBRARY"],["매일 Coffee +1","+1 Coffee every day"],["박막 내부의 빈 공동.","A hollow void inside the film."],["아주 작은 관통 구멍.","A tiny through-hole."],["Raw wafer 필요","Need a raw wafer"],["Raw wafer 버림","Dropped the raw wafer"],["☀️ Day 3 도달!","☀️ Reached Day 3!"],["☀️ Day 7 도달!","☀️ Reached Day 7!"],["서류 누적 18건 처리","Process 18 documents total"],["R&D 연구 1개 완료","Complete 1 R&D project"],["창업 1년차 결산 발표","First-year results announced"],["LITHO 캘리브레이션","LITHO CALIBRATION"],["🛋️ 첫 가구 설치!","🛋️ First furniture placed!"],["Good 웨이퍼 완성!","Good wafer crafted!"],["🛠 첫 웨이퍼 제작!","🛠 First wafer crafted!"],["팹 (smock 필요)","Fab (smock required)"],["FAB-MART 열기","Open FAB-MART"],["smock 착용/탈의","Put on / take off smock"],["채굴 (실리콘 광맥)","Mine (silicon vein)"],["취급 중 생긴 긁힘.","A scratch from handling."],["층간 정렬이 어긋남.","Layers misaligned."],["가동 중인 장비 없음","No equipment running"],["🔬 첫 QA 검사!","🔬 First QA inspection!"],["팹 출입 누적 12회","Enter the fab 12× total"],["휴게실에서 휴식 3회","Rest in the break room 3×"],["ETCH 캘리브레이션","ETCH CALIBRATION"],["🏢 사무실 풀세팅!","🏢 Office fully furnished!"],["반려 후 재조치 필요","Rejected — needs rework"],["🏢 첫 사무 업무!","🏢 First office task!"],["오늘도 좋은 수율을!","Have a great yield today!"],["사색 (깊은 휴식)","Meditate (deep rest)"],["맑은 결정질 광물.","A clear crystalline mineral."],["보라색 석영 변종.","A purple variety of quartz."],["📖 광물 수집: ","📖 Mineral collected: "],["📖 불량 패턴: ","📖 Defect pattern: "],["🔬 연구 완료: ","🔬 Research done: "],["⚡ 첫 업그레이드!","⚡ First upgrade!"],["Perfect 1개","1 Perfect"],["Perfect 2개","2 Perfect"],["옥상에서 사색 2회","Meditate on the roof 2×"],["에게 보고하세요 ("," — go report to them ("],["Rush 시간 초과","Rush timed out"],["Space — 닫기","Space — close"],["실리콘 웨이퍼 완성","Silicon wafer crafted"],["다른 연구 진행 중","Another project in progress"],["K / Esc 닫기","K / Esc to close"],["가구 상점 (B)","Furniture shop (B)"],["도감 열람 (K)","Read compendium (K)"],["웨이퍼의 주원료.","The main raw material for wafers."],["차세대 공정 노드","Next-gen process node"],[" — 보급 완료!"," — restocked!"],["🔧 즉시 완료!","🔧 Done instantly!"],["웨이퍼 3개 출하","Ship 3 wafers"],["웨이퍼 5개 출하","Ship 5 wafers"],["잘 쉬는 것도 일","Resting well is part of the job"],["📋 퀘스트 일지","📋 Quest Log"],["🏭 팹 승급! ","🏭 Fab promoted! "],["과로(자동취침) ","Overwork (auto-sleep) "],["전설의 팹 매니저","Legendary fab manager"],["📋 경영 성적표","📋 Management Report"],["Combo 끊김!","Combo broken!"],["퀘스트 완료! +","Quest complete! +"],["서류 이어하기 (","Resume documents ("],["개 필요 (보유 "," needed (have "],["탈의실로 나가기","Out to gowning room"],["Temp 안정화","Temp stabilized"],["R&D 연구소로","To the R&D lab"],["정문 — 밖으로","Front gate — outside"],["밖으로 (정원)","Outside (garden)"],["AI 자동 정렬","AI auto-alignment"],["🛒 첫 구매!","🛒 First purchase!"],["콤보 x3 도달","Reach combo x3"],["콤보 x5 도달","Reach combo x5"],["서류 6건 처리","Process 6 documents"],["휴식 누적 9회","Rest 9× total"],["사색 누적 6회","Meditate 6× total"],["  ·  업적 ","  ·  Achv "],["Litho 완료","Litho done"],["s  ×2 보상","s  ×2 reward"],["예상 수익  +","Est. profit  +"],["예상 손실  -","Est. loss  -"],["정보 미비 요청","Request lacks information"],["근거 자료 누락","Missing supporting evidence"],["규정 위반 보고","Reports a rule violation"],["👔 평상복으로","👔 Back to casual"],["smock 벗기","Take off smock"],["smock 입기","Put on smock"],["이미 연구 완료","Already researched"],[" 연구 시작 ("," start research ("],["Esc 일어서기","Esc to stand"],["웨이퍼 꺼내기","Take a wafer"],["소파에서 휴식","Rest on the sofa"],["벤치에서 쉬기","Rest on the bench"],["채석장 갱도로","To the quarry adit"],["브리지(단락)","Bridge (short)"],["오버레이 오차","Overlay error"],["수율 마스터리","Yield mastery"],["R&D 연구소","R&D Lab"],["실리콘 채석장","Silicon Quarry"],["가동 중...","Running..."],["버릴 게 없음","Nothing to drop"],[") 버림 😢",") dropped 😢"],[") 버림 😭",") dropped 😭"],[" 시즌 시작!"," season begins!"],["MAX 도달!","Reached MAX!"],["⚡ 풀스피드!","⚡ Full speed!"],["이미 활성 중","Already active"],["공정 엔지니어","Process engineer"],["재충전 마스터","Recharge master"],["고마워요! 「","Thank you! 「"],[" 전달했어요."," delivered."],[")\\n보상 +",")\nReward +"],["최고 콤보 x","Best combo x"],["베테랑 경영자","Veteran manager"],["성실한 라인장","Diligent line lead"],["신입 엔지니어","Junior engineer"],["Etch 완료","Etch done"],["이미 보유 중","Already owned"],["KRW 부족!","Not enough KRW!"],[" 설치 완료!"," placed!"],["🛠 제작 중","🛠 Crafting"],["웨이퍼 제작기","Wafer fabricator"],["Si 부족 (","Not enough Si ("],["재현과 대화","Talk to Jaehyun"],["스타트업 팹","Startup fab"],["수빈과 대화","Talk to Subin"],["웨이퍼 제작","Craft wafer"],["광수와 대화","Talk to Gwangsu"],["은영과 대화","Talk to Eunyeong"],["미경과 대화","Talk to Mikyung"],["연구 단말기","Research terminal"],["정우와 대화","Talk to Jungwoo"],["건물 안으로","Into the building"],["실리콘 원석","Silicon ore"],["친환경 공정","Eco-friendly process"],[" 옥상 정원"," rooftop garden"],["출하 완료!","Shipped!"],["Si 부족!","Not enough Si!"],["정렬의 달인","Alignment master"],["무결점 라인","Flawless line"],["방진 관리자","Cleanroom keeper"],["클린룸 수칙","Cleanroom rules"],["수석 연구원","Lead researcher"],["옥상 정원사","Rooftop gardener"],["마음의 정원","Garden of the mind"],["사계의 관조","Watching the seasons"],["[데일리] ","[Daily] "],["✅ 보고가능","✅ Ready to report"],["품질의 거장","Master of quality"],[" / 효과 "," / effect "],["⛏ 채굴 중","⛏ Mining"],["실리콘 광맥","Silicon vein"],["도감 (K)","Compendium (K)"],["   불량 ","   Defects "],["노광 시작","Start litho"],["식각 시작","Start etch"],["QA 검사","QA inspect"],["대형 화분","Large planter"],["기술 서적","Tech books"],["서류 처리","Process docs"],["도서관으로","To the library"],["정문 로비","Main lobby"],["행정 팀장","Admin lead"],["결재의 신","Approval god"],["페이퍼리스","Paperless"],["오염 제로","Zero contamination"],["기술 선도","Tech leader"],["의뢰: 「","Request: 「"],["생산 규모","Production scale"],["수습 사원","Trainee"],["워커홀릭 ","Workaholic "],["종합 등급","Overall grade"],["신규 계약","New contract"],["적자 거래","Loss-making deal"],["예산 결재","Budget approval"],["휴가 신청","Leave request"],["업무 완료","Work done"],["업무 대기","Awaiting work"],["업무 결과","Work result"],["정확도  ","Accuracy  "],["획득  +","Gained  +"],["↓ 휴게실","↓ Break room"],["실리콘 x","Silicon x"],["📖 도감","📖 Compendium"],["불량 패턴","Defect patterns"],["← → 탭","← → tabs"],["중소 팹","Midsize fab"],["양산 팹","Mass-production fab"],["대형 팹","Large fab"],["커피머신","Coffee machine"],["🌧 비","🌧 Rain"],["☀ 맑음","☀ Clear"],["휴게실로","To break room"],["사무실로","To office"],["옥상으로","To rooftop"],["내려가기","Go down"],["게르마늄","Germanium"],["스크래치","Scratch"],[" 사무실"," Office"],["구매 ✓","Bought ✓"],["현재: ","Now: "],["바리스타","Barista"],["첫 혁신","First innovation"],["완료 ✓","Done ✓"],[" 승급!"," promoted!"],["개 폐기"," scrapped"],["퀘스트 ","Quest "],["회 완료","× done"],["보유 ✓","Owned ✓"],["내 자리","My desk"],["✓ 정확","✓ Correct"],["✗ 오답","✗ Wrong"],[" 필요)"," needed)"],["연구중 ","Researching "],["일 남음"," days left"],["▼ 정문","▼ Front gate"],["실리콘 ","Silicon "],[" 실리콘"," Silicon"],["▲ 정원","▲ Garden"],["기가팹","Gigafab"],["❄ 눈","❄ Snow"],["복도로","To corridor"],["팹으로","To fab"],["자판기","Vending"],["로비로","To lobby"],["황철석","Pyrite"],["자수정","Amethyst"],["파티클","Particle"],["보이드","Void"],["휴게실","Break room"],["도서관","Library"],[" 정원"," Garden"],["사무실","Office"],["탈의실","Gowning room"],["누적 ","Total "],["숙련도","Skill"],["워라밸","Work-life"],["양산왕","Mass-prod king"],["결함 ","Defects "],["보유 ","Have "],["비용 ","Cost "],["연속 ","Streak "],["연구소","Lab"],["광물 ","Minerals "],["미발견","Undiscovered"],["출하","Ship"],["여름","Summer"],["가을","Autumn"],["겨울","Winter"],["어항","Fish tank"],["흔함","Common"],["석영","Quartz"],["장석","Feldspar"],["운모","Mica"],["보통","Uncommon"],["희귀","Rare"],["운철","Meteorite"],["전설","Legendary"],["핀홀","Pinhole"],["복도","Corridor"],["재현","Jaehyun"],["수빈","Subin"],["광수","Gwangsu"],["은영","Eunyeong"],["정우","Jungwoo"],["미경","Mikyung"],["동료","Coworker"],["옥상","Rooftop"],["품질","Quality"],["효율","Efficiency"],["신뢰","Trust"],["승인","Approve"],["반려","Reject"],["보류","Hold"],["일)","d)"],["대기","Standby"],["안내","Guide"],["표본","Specimen"],["광맥","Vein"],["광물","Mineral"],["봄","Spring"],["팹","Fab"],["회","×"],["일","d"],["시간","h"],["일차",""],["개",""],["시즌","season"],["달성","reached"]];
+let TR_FRAG = TR_PAIRS.slice().sort((a,b)=>b[0].length-a[0].length);
+const TR_EXACT = {}; for (const [k,v] of TR_PAIRS) if (TR_EXACT[k]===undefined) TR_EXACT[k]=v;
+const TR_CACHE = new Map();
+const HANGUL = /[\uAC00-\uD7A3]/;
+function t(s){
+  if (typeof s !== 'string' || s.length===0) return s;
+  if (typeof state === 'undefined' || !state || state.lang !== 'en') return s;
+  if (!HANGUL.test(s)) return s;
+  const c = TR_CACHE.get(s); if (c !== undefined) return c;
+  let out;
+  if (TR_EXACT[s] !== undefined) out = TR_EXACT[s];
+  else { out = s; for (const [ko,en] of TR_FRAG){ if (out.indexOf(ko) !== -1) out = out.split(ko).join(en); if (!HANGUL.test(out)) break; } }
+  TR_CACHE.set(s, out);
+  return out;
+}
+
 function txt(s, x, y, size, col, anchor){
+  s = t(s);
   ctx.fillStyle = col;
   ctx.font = size + "px 'Press Start 2P', monospace";
   ctx.textAlign = anchor || 'left';
@@ -273,6 +291,10 @@ const state = {
   msg: null,
   speech: null,
   prompt: null,
+  // language / i18n
+  lang: 'ko',             // 'ko' | 'en'
+  langMenu: false,        // language-select overlay shown
+  langSel: 0,             // cursor in the language menu (0=ko, 1=en)
   // scene & transition
   scene: 'fab',           // 'fab' | 'office' | 'smock'
   sceneFrom: 'fab',       // where the current transition originated
@@ -656,6 +678,11 @@ window.addEventListener('keydown', e => {
   keys[k] = true;
   if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
 
+  // Language menu owns all input while open
+  if (state.langMenu){ handleLangMenuKey(k); return; }
+  // Open the language menu any time
+  if (k === 'g'){ openLangMenu(); return; }
+
   // Lock all input during a scene fade
   if (state.fadeDir !== 0) return;
 
@@ -761,8 +788,9 @@ function cvsToLogical(e){
   };
 }
 cvs.addEventListener('mousedown', e => {
-  if (!state.qaGame || state.qaGame.result) return;
   const p = cvsToLogical(e);
+  if (state.langMenu){ langMenuClick(p.x, p.y); return; }
+  if (!state.qaGame || state.qaGame.result) return;
   qaClick(p.x, p.y);
 });
 cvs.addEventListener('mousemove', e => {
@@ -778,12 +806,13 @@ function isDown(...names){ return names.some(n => keys[n]); }
 // ============================================================
 
 function toast(text, ms){
-  const t = document.getElementById('toast');
+  text = t(text);
+  const tEl = document.getElementById('toast');
   const p = document.getElementById('toast-panel');
   p.innerHTML = text;
-  t.classList.add('show');
+  tEl.classList.add('show');
   clearTimeout(toast._h);
-  toast._h = setTimeout(() => t.classList.remove('show'), ms || 1800);
+  toast._h = setTimeout(() => tEl.classList.remove('show'), ms || 1800);
 }
 
 function showMsg(text, frames){
@@ -1478,14 +1507,27 @@ function drawQuestLog(){
 }
 
 function drawWrapped(text, x, y, maxW, size, color, lineH){
+  text = t(text);
   const charW = size * 1.18;
   const perLine = Math.max(6, Math.floor(maxW / charW));
   let ly = y;
   for (const para of String(text).split('\n')){
     if (para.length === 0){ ly += lineH; continue; }
-    for (let i=0;i<para.length;i+=perLine){
-      txt(para.slice(i, i+perLine), x, ly, size, color, 'start');
-      ly += lineH;
+    if (para.indexOf(' ') !== -1){
+      // word-aware wrapping (better for English)
+      let line = '';
+      for (const word of para.split(' ')){
+        const test = line ? line + ' ' + word : word;
+        if (test.length > perLine && line){
+          txt(line, x, ly, size, color, 'start'); ly += lineH; line = word;
+        } else line = test;
+      }
+      if (line){ txt(line, x, ly, size, color, 'start'); ly += lineH; }
+    } else {
+      for (let i=0;i<para.length;i+=perLine){
+        txt(para.slice(i, i+perLine), x, ly, size, color, 'start');
+        ly += lineH;
+      }
     }
   }
 }
@@ -1776,6 +1818,7 @@ function tickRush(){
 
 function update(){
   state.t++;
+  if (state.langMenu){ return; }   // language menu pauses everything
   tickFade();
   if (state.ending) return;   // freeze the world behind the ending screen
   if (state.questLogOpen){ state.pmove=false; state.pwalk=0; return; }  // quest log pauses the world
@@ -6015,10 +6058,75 @@ function frame(){
   // ending report card (above everything)
   drawEnding();
 
+  // language menu (topmost)
+  drawLangMenu();
+
   requestAnimationFrame(frame);
 }
 
 // Welcome
+// ---- language (i18n) ----
+function loadLang(){
+  let saved = null;
+  try { saved = localStorage.getItem('cv_lang'); } catch(e){}
+  if (saved === 'ko' || saved === 'en'){
+    state.lang = saved;
+    state.langMenu = false;
+  } else {
+    state.langMenu = true;       // force a first-time choice
+    state.langSel = 0;
+  }
+}
+function setLang(l){
+  state.lang = l;
+  state.langSel = (l === 'en') ? 1 : 0;
+  try { localStorage.setItem('cv_lang', l); } catch(e){}
+  state.langMenu = false;
+  TR_CACHE.clear();
+}
+function openLangMenu(){
+  state.langSel = (state.lang === 'en') ? 1 : 0;
+  state.langMenu = true;
+}
+function handleLangMenuKey(k){
+  if (k === 'arrowup' || k === 'w' || k === 'arrowdown' || k === 's' ||
+      k === 'arrowleft' || k === 'a' || k === 'arrowright' || k === 'd'){
+    state.langSel = state.langSel ? 0 : 1;
+  } else if (k === '1'){ setLang('ko'); }
+  else if (k === '2'){ setLang('en'); }
+  else if (k === 'enter' || k === ' ' || k === 'e'){ setLang(state.langSel ? 'en' : 'ko'); }
+  else if (k === 'escape' && (state.lang === 'ko' || state.lang === 'en')){ state.langMenu = false; }
+}
+function langMenuClick(lx, ly){
+  // two option rows
+  const ow = 150, ox = (W-ow)/2;
+  const koY = 120, enY = 154, oh = 26;
+  if (lx>=ox && lx<=ox+ow){
+    if (ly>=koY && ly<=koY+oh){ setLang('ko'); return; }
+    if (ly>=enY && ly<=enY+oh){ setLang('en'); return; }
+  }
+}
+function drawLangMenu(){
+  if (!state.langMenu) return;
+  ctx.fillStyle='rgba(8,8,16,0.92)'; ctx.fillRect(0,0,W,H);
+  const pw=240, ph=170, px=(W-pw)/2, py=(H-ph)/2;
+  R(px-3,py-3,pw+6,ph+6,'#3a5680');
+  R(px,py,pw,ph,'#10141f'); R(px,py,pw,2,'#3a5680'); R(px,py+ph-2,pw,2,'#1a2438');
+  txt('LANGUAGE', W/2, py+26, 9, '#cfe0f4','center');
+  txt('언어 선택', W/2, py+42, 7, '#7fa8d8','center');
+  const ow=150, ox=(W-ow)/2;
+  const opts=[['한국어 (Korean)', 0, 120], ['English', 1, 154]];
+  for (const [label, idx, oy] of opts){
+    const on = state.langSel === idx;
+    R(ox,oy,ow,26, on?'#2a64c0':'#202838');
+    R(ox,oy,ow,1, on?'#5a90e0':'#2a3548');
+    if (on){ R(ox,oy,3,26,'#7fc0ff'); }
+    txt(label, W/2, oy+17, 7, on?'#ffffff':'#9ab0cc','center');
+  }
+  txt('↑↓ + Enter  ·  클릭 / Click', W/2, py+ph-14, 5, '#6a7a96','center');
+}
+
+loadLang();
 newQuest();
 initNpcQuests();
 rollWeather();
@@ -6028,6 +6136,9 @@ setTimeout(() => {
 setTimeout(() => {
   showMsg('Tip: 각 장소의 NPC에게 말 걸고 퀘스트 받기 · L = 퀘스트 창', 240);
 }, 2200);
+setTimeout(() => {
+  showMsg('G: 언어 / Language', 200);
+}, 4600);
 
 frame();
 </script>
