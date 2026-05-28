@@ -83,7 +83,7 @@
   <canvas id="game" width="960" height="540"></canvas>
   <div class="toast" id="toast"><div class="panel" id="toast-panel"></div></div>
 </div>
-<div class="hint">
+<div class="hint" id="hintbar">
   <b>이동</b> 방향키/WASD &nbsp;·&nbsp; <b>상호작용</b> Space/E &nbsp;·&nbsp; <b>버리기</b> Q &nbsp;·&nbsp; <b>휴식</b> R &nbsp;·&nbsp; <b>상점</b> B &nbsp;·&nbsp; <b>인벤토리</b> 1~8 &nbsp;·&nbsp; <b>나가기</b> 좌하단 OUT(탈의실)
 </div>
 
@@ -6066,6 +6066,14 @@ function frame(){
 
 // Welcome
 // ---- language (i18n) ----
+const HINT_HTML = {
+  ko: '<b>이동</b> 방향키/WASD &nbsp;·&nbsp; <b>상호작용</b> Space/E &nbsp;·&nbsp; <b>버리기</b> Q &nbsp;·&nbsp; <b>휴식</b> R &nbsp;·&nbsp; <b>상점</b> B &nbsp;·&nbsp; <b>인벤토리</b> 1~8 &nbsp;·&nbsp; <b>퀘스트</b> L &nbsp;·&nbsp; <b>도감</b> K &nbsp;·&nbsp; <b>언어</b> G',
+  en: '<b>Move</b> Arrows/WASD &nbsp;·&nbsp; <b>Interact</b> Space/E &nbsp;·&nbsp; <b>Drop</b> Q &nbsp;·&nbsp; <b>Rest</b> R &nbsp;·&nbsp; <b>Shop</b> B &nbsp;·&nbsp; <b>Inventory</b> 1~8 &nbsp;·&nbsp; <b>Quests</b> L &nbsp;·&nbsp; <b>Compendium</b> K &nbsp;·&nbsp; <b>Language</b> G',
+};
+function updateHintBar(){
+  const el = document.getElementById('hintbar');
+  if (el) el.innerHTML = HINT_HTML[state.lang] || HINT_HTML.ko;
+}
 function loadLang(){
   let saved = null;
   try { saved = localStorage.getItem('cv_lang'); } catch(e){}
@@ -6083,6 +6091,7 @@ function setLang(l){
   try { localStorage.setItem('cv_lang', l); } catch(e){}
   state.langMenu = false;
   TR_CACHE.clear();
+  updateHintBar();
 }
 function openLangMenu(){
   state.langSel = (state.lang === 'en') ? 1 : 0;
@@ -6127,6 +6136,7 @@ function drawLangMenu(){
 }
 
 loadLang();
+updateHintBar();
 newQuest();
 initNpcQuests();
 rollWeather();
