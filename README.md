@@ -2,191 +2,80 @@
 
 https://dbna1027-ctrl.github.io/cleanroom-valley/
 
-> **반도체 팹을 경영하는 도트 라이프 시뮬레이션** — 채굴부터 출하까지, 하루하루 공장을 키워라.
+# 🧫 Cleanroom Valley
+
+**Stardew Valley, except the farm is a semiconductor fab.**
+
+A cozy management + life sim where you suit up, run the cleanroom, chase yield, and grow a one-room startup into the nation's largest **GIGAFAB** — all in a single HTML file. No engine. No install. Just open it and play.
+
+### ▶️ [**Play it now in your browser**](https://dbna1027-ctrl.github.io/cleanroom-valley/)
+
+> One speck of dust ruins a wafer. So before every shift, you gown up.
 
 ---
 
-## 게임 소개 (About)
+## ✨ Why it's different
 
-당신은 막 인수한 작은 팹(Fab)의 신임 매니저. 광맥에서 실리콘 원석을 캐고, 탈의실에서 웨이퍼를 제작하고, 노광·식각·QA 검사를 거쳐 칩을 출하한다. 분기마다 계절이 바뀌고, 한울반도체·네오칩·아쿠아웍스 같은 고객사들이 의뢰를 건넨다. 사무실 동료 박과장이 주문을 정리해주고, 휴게실에선 은영이가 커피 한 잔을 권하고, 옥상에선 정아가 사색에 잠긴다.
+Most factory games make you a god looking down on a grid. **Cleanroom Valley puts you *inside* the fab.** You're a worker who walks the floor, pulls wafers from the FOUP, runs the lithography stepper, inspects for defects under a microscope, and clocks out to watch the sun set from the rooftop garden.
 
-**28일이 지나면 경영 성적표를 받는다.** S 등급부터 F 등급까지 — 당신의 팹은 어디까지 갈까?
-
-도트 픽셀의 따뜻한 색감 속에서, 작은 성공을 매일 쌓아가는 *Stardew Valley*-결의 반도체 매니지먼트 시뮬레이션입니다.
+It's part tycoon, part cozy life sim — and the whole thing fits in **one `.html` file you can read end to end.**
 
 ---
 
-## ✨ 주요 특징
+## 🎮 Features
 
-- 🏭 **5단계 팹 성장** — 스타트업 팹 → 중소 팹 → 양산 팹 → 대형 팹 → 기가팹. 누적 실리콘이 쌓일수록 출하 단가가 오르고 팹이 진화합니다.
-- 📅 **28일 캠페인 + 4계절** — 봄·여름·가을·겨울이 3일마다 회전. 비·눈·맑음이 매일 굴려지고, 28일 차에 종합 성적표(S~F 등급)를 받습니다.
-- 🕐 **실시간 일과** — 06:00 시작, 10초마다 1게임시간. 02:00을 넘기면 과로로 쓰러져 다음날로 강제 진입. 일출/일몰 광원이 부드럽게 변합니다.
-- 💰 **두 종류 화폐** — **Si**(실리콘, 생산물 출하) + **₩**(원, 사무직 서류 작업). 각자 다른 상점에서 사용.
-- 🎲 **하루 모디파이어 5종** — ☀ 평범 / 🔥 러시 데이 / 💨 PR 부족 / 🎯 정밀 컨디션 / ⚡ 정전 위기. 매일 아침 룰렛.
-- 🤝 **3개 고객사 + 평판 시스템** — 한울반도체 · 네오칩 · 아쿠아웍스. 마감 지키면 ★, 늦으면 ✕.
-- 🔥 **콤보 시스템** — PERFECT 연속 출하 시 1.5x → 3.5x 배율. 15초 윈도우.
-- 🚨 **러시 오더** — 갑작스러운 시간제한 미션. 30초 안에 해내면 보너스 Si.
-- 🔍 **4종 미니게임** — 캘리브레이션 (타이밍) / 결함 분석 (4×4 격자) / QA 검사 (마우스 돋보기) / 서류 작업 (도장)
-- 📖 **2종 도감** — 결함 6종 + 광물 8종. 발견할 때마다 컬렉션 등록.
-- 🔬 **R&D 연구** — 4개 영구 효과 프로젝트 (차세대 공정 / 수율 마스터리 / 친환경 공정 / AI 자동 정렬).
-- 🛋 **가구 시스템** — 커피머신·화분·어항·기술 서적. ₩로 구매, 매일 패시브 효과.
-- 👥 **7명의 동료** — 재현·박과장·광수·미경·정우·은영·정아. 상황에 따라 다른 멘트.
-- 💾 **자동 저장** — 잠들 때마다 JSON에 저장. 끊기지 않는 영구 진행.
-- ⌨️ **한글 IME 안정** — 한/영 전환 중에도 모든 키가 정확히 작동.
+- **A real production line.** Mine silicon → craft a raw wafer → expose it (litho) → etch it → pass QA → ship it for Si. Every chip you sell is one you physically carried through the fab.
+- **Skill-based minigames.** Time the litho/etch calibration to hit the **PERFECT** zone for a grade bump and a combo. Hunt every defect under the microscope to earn a Grade-A wafer worth +50%.
+- **Gown up to enter.** Casual clothes for the office, full bunny suit for the cleanroom. Walk into the wrong room dressed wrong and the airlock turns you away.
+- **A whole building to explore.** Cleanroom, gowning room, office, break room, R&D lab, library, lobby, front garden, a silicon quarry — and a **rooftop garden** with a full day/night sky.
+- **Living world.** A real-time day/night cycle (golden hour, dusk, stars, string lights flicking on), four rotating **seasons**, and weather that rolls each morning.
+- **Build the company.** Earn KRW doing office paperwork, fund **R&D projects** for permanent upgrades, buy furniture with passive perks, and climb the fab ladder: `STARTUP → SMALL → VOLUME → MEGA → GIGAFAB`.
+- **Collect & complete.** A **도감 / compendium** of minerals and defect patterns to fill out, NPC quests in every room, achievements, and rush orders.
+- **An actual ending.** Reach GIGAFAB (or survive to Day 28) and get a **management report card** grading you across six axes — then keep playing endlessly.
+- **Fully bilingual.** Switch between 🇰🇷 한국어 and 🇬🇧 English at any time (press `G`).
 
 ---
 
-## 🎮 플레이 방법 (How to Play)
+## 🕹️ Controls
 
-### 핵심 생산 체인
+| Action | Keys |
+| --- | --- |
+| Move | `Arrow keys` / `WASD` |
+| Interact | `Space` / `E` |
+| Drop item | `Q` |
+| Rest (next day) | `R` |
+| Shop | `B` |
+| Inventory | `1` – `8` |
+| Quest log | `L` |
+| Compendium | `K` |
+| Language | `G` |
 
-```
-⛏ 채굴 (채석장)
-     ↓ +1 ore (30% 광물 발견)
-🚪 웨이퍼 제작 (탈의실)
-     ↓ ore 3 → raw wafer
-🟡 노광 (Litho)
-     ↓ 캘리브 미니게임 → exposed
-🟣 식각 (Etcher)
-     ↓ 캘리브 미니게임 → etched
-🔍 QA 검사 (선택, 마우스)
-     ↓ A/B 등급 인증
-📦 출하 (Crate)
-     ↓ Si 보상
-```
-
-또는 **FOUP**에서 무료 raw wafer를 꺼내는 단축 경로도 가능.
-
-### 보상 공식
-
-```
-Si 보상 = 팹레벨 단가 × 품질(N/G/P = 1/2/4) × 콤보(1~3.5x) × 모디파이어 × QA 등급(A=1.5x / B=1.15x)
-```
-
-PERFECT를 콤보로 이어가며 러시 데이를 잡으면 한 번에 큰 돈이 나옵니다.
-
-### 일일 루프
-
-1. **아침 06:00** — 사무실 침대 옆에서 깨어남. 오늘의 모디파이어 + 날씨 + 계절 확인
-2. **NPC 박과장**에서 주문 수락 (최대 3개)
-3. **광산 → 탈의실 → 팹**에서 생산
-4. **사무실 책상에서 서류 작업** (P 키) — 하루 1회 ₩ 획득
-5. **휴게실 소파/자판기**로 중간 Power 회복 (소파 3회/일, 자판기 ₩30/회)
-6. **저녁 22:00** — "🌙 밤이 깊었어요" 경고
-7. **침대에서 R 키** → 정산 모달 → 자동 저장
-   - (놓치면 02:00에 강제 collapse, 다음날 카운터 +1)
-8. **Day 28 종료 시** → 자동으로 풀스크린 성적표 모달 (1회)
-
-### 등급별 한 줄 (S/A/B/C/D/F)
-
-성적표는 **누적 Si + PERFECT 횟수 + 주문 완료 + 도감 진행도 − 과로 페널티**로 산출되며, S 등급은 "전설의 팹 매니저", F는 "다시 도전! 매일이 새 기회예요."
+**The loop:** gown up → into the fab → pull a wafer → litho → etch → QA → ship. Run low on Power? `R` to rest. Need photoresist or etchant? Hit the `B` shop. Then head to the rooftop and watch the sun go down.
 
 ---
 
-## ⌨️ 조작법 (Controls)
+## 🛠️ Built with nothing fancy
 
-| 키 | 동작 |
-|---|---|
-| **WASD / 방향키** | 이동 |
-| **Space / E** | 상호작용 · 미니게임 정지 · 대화 진행 |
-| **Q** | 들고 있는 웨이퍼 버리기 |
-| **R** | 잠자기 (사무실 침대 근처에서만) |
-| **B** | 상점 — Fab에선 FAB-MART(Si), Office에선 가구 상점(₩) |
-| **P** | 사무실 책상 모달 안에서 → 서류 작업 시작 |
-| **L / J** | 퀘스트 로그 열기/닫기 (어디서든) |
-| **K** | 도감 (결함 + 광물) 열기/닫기 (어디서든) |
-| **C** | 사무실 책상 모달 안에서 → 도감 열기 |
-| **1~8** | 인벤토리 슬롯 (4 Coffee · 5 Wrench · 6 Mask · 7 Ore) |
-| **마우스** | QA 검사 미니게임에서 돋보기 + 결함 클릭 |
-| **Esc** | 모든 모달 닫기 / 미니게임 중단 |
-
-> 💡 **한글 입력 상태에서도 키가 동작한다** — Godot의 `physical_keycode`를 사용해 IME 모드와 무관하게 물리 키 위치로 입력을 받습니다. 한/영 키 전환 도중에도 WASD·E·R·B 모두 정상 작동.
+- **Pure vanilla JavaScript** on a single `<canvas>` — no framework, no build step, no dependencies.
+- **One HTML file**, hand-drawn pixel art rendered at runtime (every machine, sprite, and sunset is code).
+- Runs anywhere a browser does. View source and the entire game is right there.
 
 ---
 
-## 🗺 월드 맵 (11개 룸)
+## 🚧 Status & roadmap
 
-```
-                 [🌳 옥상 정원]
-                       ↑
-                 [🛋 휴게실]
-                       ↑
-[📚 도서관]            ↑
-     ↑                 ↑
-[🏛 로비] ← [🚶 복도] ← [🏢 사무실] ← [🏭 팹] → [🔬 분석실]
-     ↓                                  ↓
-[🌷 외부 정원]                    [🚪 탈의실]
-                                        ↓
-                                  [⛏ 광산]
-```
+Cleanroom Valley is **in active development**, with a Steam release as the goal.
 
-각 룸은 자신만의 룩 (벽지·바닥·소품)과 NPC를 가집니다.
+- [x] Core production loop + minigames
+- [x] Day/night, seasons, weather
+- [x] R&D, quests, compendium, fab leveling, ending
+- [ ] Gowning transition animation
+- [ ] Sound & music
+- [ ] Save system
+- [ ] Steam page & demo
+
+⭐ **Star the repo** to follow along, and find devlogs on [X / Twitter](#). Wishlists open soon.
 
 ---
 
-## 👥 등장인물 (Cast)
-
-| 룸 | NPC | 직책 | 컬러 |
-|---|---|---|---|
-| 🏭 팹 | **재현** | 라인 매니저 | 🟢 |
-| 🏢 사무실 | **박과장** | QA 리드 (주문 보드) | 🟦 |
-| 🚪 탈의실 | **광수** | 장비 기술자 | 🟡 |
-| ⛏ 광산 | **미경** | 광산 작업자 | 🟠 |
-| 🔬 분석실 | **정우** | R&D 연구원 | 🟣 |
-| 🛋 휴게실 | **은영** | 휴게실 동료 | 🌸 |
-| 🌳 옥상 | **정아** | 사색가 | 💙 |
-
-대화는 상황 의존적입니다 — 같은 NPC가 콤보 상태, 도감 진행도, 날씨, 시간대에 따라 다른 멘트를 던집니다.
-
----
-
-## 📖 도감 (Compendium)
-
-**K 키로 어디서든 열기**, 또는 도서관 열람대 / 사무실 책상 → C.
-
-### 결함 6종
-스크래치 · 파티클 · 보이드 · 미스얼라인 · 브리지 · 오염
-> *분석실 미니게임 / QA 검사에서 발견 시 자동 등록.*
-
-### 광물 8종
-실리콘 원석 · 석영 · 장석 · 운모 · 황철석 · **게르마늄(희귀)** · **자수정(희귀)** · **운철(전설)**
-> *광산에서 채굴 시 30% 확률로 발견. 가중 무작위.*
-
----
-
-
-### 코드 규모
-
-## 🎯 로드맵
-
-**Steam 출시까지** (3~6개월 예상)
-
-- 🎵 **오디오** — BGM 4~6트랙 (lofi-industrial) + SFX (PERFECT 챠임, SCRAP 부저, ...)
-- 🎨 **튜토리얼** — 첫날 박과장의 단계별 가이드
-- ⚙️ **설정 메뉴** — 볼륨, 풀스크린, 키 리매핑, 색맹 모드
-- 🎮 **컨트롤러 지원** — Steam Deck 검증 포함
-- 🏆 **30+ Steam 업적** — 첫 PERFECT부터 도감 완성까지
-- 🌐 **다국어** — 영어/일본어/중국어 번역
-- 🔧 **공정 노드 확장** — 90nm → 5nm 테크 트리
-
-자세한 [Steam 출시 준비 가이드](docs/STEAM_ROADMAP.md)는 곧 추가 예정.
-
----
-
-## 📝 라이선스
-
-- **게임 코드**: 사용자 지정 (TBD)
-- **Galmuri 폰트**: SIL OFL ([quiple/galmuri](https://github.com/quiple/galmuri))
-- 사운드/이미지 등 차후 에셋의 라이선스는 별도 명시
-
----
-
-## 🙌 크레딧
-
-- 게임 설계 · 개발: *@dbna*
-- 픽셀 아트 · 색 팔레트: FAB-4 공유 라이브러리 기반
-- Galmuri 한글 픽셀 폰트: [quiple](https://github.com/quiple/galmuri)
-
----
-
-*"매일 아침 06시, 모디파이어가 굴려진다. 오늘은 어떤 하루를 만들 건가요?"* 🏭✨
+*Made by one developer, one HTML file at a time.*
