@@ -341,6 +341,15 @@ const state = {
   ending: null,          // null | report object while the ending screen is up
   endingShown: false,    // ending only ever triggers once
   collapseCount: 0,      // # of 02:00 auto-collapses (overwork) — for work-life grade
+  // --- automation (Phase 1) ---
+  auto: { unlocked:false, on:false, lines:[1,1,1], buf:[0,0], prog:0, shipped:0, good:0, perfect:0, siEarned:0, scrapped:0, bottleneck:0, stalled:false, sel:0, lastShipT:0 },
+  dashOpen: false,       // automation / production dashboard overlay (P)
+  // --- contracts / economy (Phase 3) ---
+  contracts: { available:[], active:[], completed:0, failed:0, open:false, sel:0, _id:0 },
+  // --- tradeoff tech tree (Phase 4) ---
+  tech: { owned:{}, on:{}, open:false, sel:0 },
+  // --- contamination / maintenance (Phase 5) ---
+  contam: 0, _contamWarn: false,
 };
 
 // ============================================================
@@ -686,6 +695,49 @@ window.addEventListener('keydown', e => {
   // Lock all input during a scene fade
   if (state.fadeDir !== 0) return;
 
+  // Automation dashboard (P) — owns input while open; opens above the world
+  if (state.dashOpen){
+    if (k === 'p' || k === 'escape' || k === 'q') state.dashOpen = false;
+    else if (k === 'u') autoUnlock();
+    else if (k === 'o') autoToggle();
+    else if (k === 'm') autoPurge();
+    else if (k === 'arrowup' || k === 'w') state.auto.sel = (state.auto.sel + 2) % 3;
+    else if (k === 'arrowdown' || k === 's') state.auto.sel = (state.auto.sel + 1) % 3;
+    else if (k === 'enter' || k === ' ' || k === 'b' || k === 'h') autoBuyLine(state.auto.sel);
+    return;
+  }
+  if (k === 'p'){
+    if (state.ending || state.questLogOpen || state.compendiumOpen || state.npcDialog ||
+        state.shopOpen || state.officeShopOpen || state.rndMenuOpen || state.miniGame || state.qaGame || state.contracts.open || state.tech.open) return;
+    state.dashOpen = true; return;
+  }
+  // Contracts board (C) — owns input while open; opens above the world
+  if (state.contracts.open){
+    if (k === 'c' || k === 'escape' || k === 'q') state.contracts.open = false;
+    else if (k === 'arrowup' || k === 'w'){ const n = state.contracts.available.length; if (n) state.contracts.sel = (state.contracts.sel + n - 1) % n; }
+    else if (k === 'arrowdown' || k === 's'){ const n = state.contracts.available.length; if (n) state.contracts.sel = (state.contracts.sel + 1) % n; }
+    else if (k === 'enter' || k === ' ') acceptContract(state.contracts.sel);
+    return;
+  }
+  if (k === 'c'){
+    if (state.ending || state.questLogOpen || state.compendiumOpen || state.npcDialog ||
+        state.shopOpen || state.officeShopOpen || state.rndMenuOpen || state.miniGame || state.qaGame || state.dashOpen || state.tech.open) return;
+    state.contracts.open = true; return;
+  }
+  // Tech tree (T) — owns input while open; opens above the world
+  if (state.tech.open){
+    if (k === 't' || k === 'escape' || k === 'q') state.tech.open = false;
+    else if (k === 'arrowup' || k === 'w') state.tech.sel = (state.tech.sel + TECHS.length - 1) % TECHS.length;
+    else if (k === 'arrowdown' || k === 's') state.tech.sel = (state.tech.sel + 1) % TECHS.length;
+    else if (k === 'enter' || k === ' ') techBuy(state.tech.sel);
+    return;
+  }
+  if (k === 't'){
+    if (state.ending || state.questLogOpen || state.compendiumOpen || state.npcDialog ||
+        state.shopOpen || state.officeShopOpen || state.rndMenuOpen || state.miniGame || state.qaGame || state.dashOpen || state.contracts.open) return;
+    state.tech.open = true; return;
+  }
+
   // Ending screen owns input — any of these resumes endless play
   if (state.ending){
     if (k === ' ' || k === 'enter' || k === 'r') closeEnding();
@@ -968,6 +1020,8 @@ function tryInteract(){
     const reward = computeShipReward(state.carryQ);
     gainSi(reward);
     onShipped(state.carryQ);
+    deliverToContracts(state.carryQ);   // route this wafer to a matching contract (Phase 3)
+    state.contam = Math.min(100, state.contam + CONTAM.manual);   // hand work fouls the room a little (Phase 5)
     const gradeTag = state.carryQA === 'A' ? ' [A]' : state.carryQA === 'B' ? ' [B]' : '';
     const big = reward >= 35 || state.carryQ === 2;
     spawnFloater(448, 198, '+' + reward + ' Si' + gradeTag, big ? '#fff2bc' : C.badge, { size: big ? 9 : 7, life: 56 });
@@ -1025,6 +1079,9 @@ function rest(){
   state.officeDoneToday = false;
   state.officeBuff = null;
   state.officeWork = null;   // abandon any in-progress/paused document session
+  tickContractsDaily();      // expire overdue contracts, refresh the order board (Phase 3)
+  if (state.contam > 0) state.contam = Math.max(0, state.contam - CONTAM.restClean);   // overnight cleaning (Phase 5)
+  state._contamWarn = false;
   // refill basic consumables up to 5
   if (state.inventory.photoresist < 5) state.inventory.photoresist = 5;
   if (state.inventory.etchant < 5) state.inventory.etchant = 5;
@@ -1506,6 +1563,267 @@ function drawQuestLog(){
   txt('각 장소의 NPC에게 말 걸어 보상 수령 · L/Esc 닫기', mx+mw/2, my+mh-8, 5, '#9a7850', 'center');
 }
 
+// ---- automation: production dashboard (P) + pipeline diagram + fab pill ----
+function drawAutoPipe(mx, topY, mw){
+  const a = state.auto;
+  const bw = 56, bh = 32, gap = 30, siW = 26;
+  const contentW = 3*bw + 2*gap + 16 + siW;
+  let x = mx + (mw - contentW) / 2;
+  const cy = topY + bh/2;
+  const running = a.unlocked && a.on && !a.stalled && autoThroughput() > 0;
+  const flow = running ? autoThroughput() : 0;
+  function box(i){
+    const s = AUTO.stages[i];
+    const bott = a.unlocked && a.on && a.bottleneck === i;
+    const dim = a.unlocked && a.on && !bott;
+    R(x, topY, bw, bh, '#2a2436');
+    R(x+1, topY+1, bw-2, bh-2, '#34304a');
+    R(x+1, topY+1, bw-2, 6, i===0 ? C.yel : i===1 ? C.plasma : C.grnHi);
+    txt(state.lang==='en' ? s.en : s.ko, x+bw/2, topY+16, 5, '#f4ecd4', 'center');
+    txt('x'+a.lines[i], x+bw/2, topY+27, 6, dim ? '#9a96b0' : '#fff2c8', 'center');
+    if (bott){
+      ctx.strokeStyle = ((state.t>>3)&1) ? C.red : '#ff8868'; ctx.lineWidth = 1.5;
+      ctx.strokeRect(x-0.5, topY-0.5, bw+1, bh+1);
+      txt(state.lang==='en' ? 'BOTTLENECK' : '병목', x+bw/2, topY+bh+8, 5, C.red, 'center');
+    }
+    x += bw;
+  }
+  function buffer(bi){
+    const bx = x + 3, gw = 7, gh = bh-8;
+    const lvl = Math.max(0, Math.min(1, a.buf[bi] / AUTO.buffMax));
+    R(bx, topY+4, gw, gh, '#1d1a28');
+    const fillH = Math.round((gh-2)*lvl);
+    R(bx+1, topY+4+(gh-1-fillH), gw-2, fillH, lvl > 0.85 ? C.badge : '#5a9a6a');
+    R(x, cy, gap, 1, '#8a7e64');
+    R(x+gap-3, cy-1, 1, 3, '#8a7e64');
+    if (flow > 0){
+      for (let d=0; d<2; d++){
+        const ph = ((state.t * (0.4 + flow*0.05)) + d*20) % gap;
+        R(x + (ph|0), cy-1, 2, 2, '#cfe0a0');
+      }
+    }
+    x += gap;
+  }
+  box(0); buffer(0); box(1); buffer(1); box(2);
+  x += 6; R(x, cy, 10, 1, '#8a7e64');
+  if (flow > 0){ const ph=(state.t*(0.4+flow*0.05))%14; R(x+(ph%10|0), cy-1, 2, 2, '#cfe0a0'); }
+  x += 14;
+  const pulse = (state.t - a.lastShipT) < 16 && running;
+  R(x, cy-7, siW, 16, '#2e6a48'); R(x+1, cy-6, siW-2, 14, pulse ? '#46b074' : '#3a8c5c');
+  txt('Si', x+siW/2, cy+3, 6, pulse ? '#fff2c8' : '#d4ecdc', 'center');
+}
+function drawAutoPill(){
+  const a = state.auto;
+  if (!a.unlocked) return;
+  const running = a.on && !a.stalled && autoThroughput() > 0;
+  const label = '⚙ ' + (a.stalled ? 'STALL' : (a.on ? (autoThroughput()+'/m') : 'OFF'));
+  const w = label.length * 6 + 16, x = W - w - 4, y = 88;
+  R(x, y, w, 13, C.wood); R(x, y, w, 1, C.woodHi); R(x, y+12, w, 1, C.woodDk);
+  R(x+4, y+5, 4, 4, a.stalled ? C.red : running ? C.grnHi : '#9a8666');
+  txt(label, x+12, y+9, 5, C.parchment);
+  txt('P', x+w-4, y+9, 5, C.badge, 'end');
+}
+function drawDashboard(){
+  if (!state.dashOpen) return;
+  const a = state.auto, KO = state.lang !== 'en';
+  ctx.fillStyle = 'rgba(8,10,18,0.84)'; ctx.fillRect(0, 0, W, H);
+  const mw = 424, mh = 256, mx = (W - mw) / 2, my = (H - mh) / 2;
+  R(mx-3, my-3, mw+6, mh+6, '#c89858');
+  R(mx, my, mw, mh, '#f4ecd4');
+  R(mx, my, mw, 3, '#fff8e8'); R(mx, my+mh-3, mw, 3, '#c8bca0');
+  txt(KO ? '⚙ 자동 생산 라인' : '⚙ Auto Production Line', mx+mw/2, my+15, 8, '#2a1c10', 'center');
+  R(mx+12, my+20, mw-24, 1, '#c8bca0');
+
+  // status + total throughput
+  const on = a.unlocked && a.on;
+  const sCol = !a.unlocked ? '#9a8666' : a.stalled ? C.red : on ? '#2e8a4a' : '#a85820';
+  const sTxt = !a.unlocked ? (KO ? '미가동' : 'offline')
+             : a.stalled ? (KO ? '정지 (Power 부족)' : 'STALL (no power)')
+             : on ? (KO ? '가동 중' : 'running') : (KO ? '정지' : 'paused');
+  txt((KO ? '상태  ' : 'Status  ') + sTxt, mx+18, my+33, 6, sCol);
+  txt((KO ? '처리량 ' : 'Output ') + autoThroughput() + (KO ? ' 장/분' : ' /min'), mx+mw-18, my+33, 7, on ? '#2e8a4a' : '#9a8666', 'end');
+
+  // pipeline diagram
+  drawAutoPipe(mx, my+40, mw);
+
+  // per-stage rows (selectable)
+  let y = my + 96; const rowH = 20;
+  for (let i=0;i<3;i++){
+    const s = AUTO.stages[i];
+    const sel = a.sel === i;
+    const bott = a.unlocked && a.on && a.bottleneck === i;
+    if (sel){ R(mx+12, y-2, mw-24, rowH-2, '#ece2c8'); txt('▶', mx+16, y+10, 7, '#a85820'); }
+    if (bott){ R(mx+26, y+4, 6, 6, ((state.t>>4)&1) ? C.red : '#7a2818'); }
+    txt(KO ? s.ko : s.en, mx+38, y+10, 6, '#2a1c10');
+    txt((KO ? '라인 x' : 'lines x') + a.lines[i], mx+158, y+10, 6, '#5a4632');
+    txt(stageRate(i).toFixed(1) + (KO ? ' 장/분' : '/min'), mx+256, y+10, 6, bott ? C.red : '#2e8a4a');
+    if (a.lines[i] >= AUTO.maxLines) txt('MAX', mx+mw-18, y+10, 6, '#9a8666', 'end');
+    else txt('+' + (KO ? '라인 ' : 'line ') + autoLineCost(i) + ' Si', mx+mw-18, y+10, 6, state.silicon >= autoLineCost(i) ? C.badge : C.red, 'end');
+    y += rowH;
+  }
+
+  // divider + summary + tip
+  R(mx+12, y, mw-24, 1, '#e0d6bc'); y += 10;
+  const yp = a.shipped > 0 ? Math.round(((a.good + a.perfect) / a.shipped) * 100) : 0;
+  txt((KO ? '수율 ' : 'Yield ') + yp + '%  ·  ' + (KO ? '출하 ' : 'ship ') + a.shipped + '  ·  ' + a.siEarned + ' Si  ·  ' + (KO ? '전력/장 ' : 'pwr/w ') + autoPowerCost() + ' (' + (KO ? '보유 ' : 'have ') + Math.round(state.power) + ')',
+      mx+18, y+6, 5, '#6a5238');
+  y += 12;
+  if (a.unlocked){
+    // contamination gauge + maintenance (Phase 5)
+    const cv = Math.round(state.contam);
+    const ccol = cv >= 75 ? C.red : cv >= 50 ? '#c88a2a' : '#3a9a5a';
+    txt(KO ? '🧪 오염도' : '🧪 Contam', mx+18, y+7, 5, '#6a5238');
+    const gx = mx+92, gw = 150;
+    R(gx, y+2, gw, 8, '#d8ccb0'); R(gx, y+2, Math.round(gw*Math.min(1,cv/100)), 8, ccol);
+    txt(cv + '%', gx+gw+16, y+8, 5, ccol, 'center');
+    txt(state.contam > 0 ? (KO ? 'M: 정비' : 'M: clean') : (KO ? '청정' : 'clean'), mx+mw-18, y+8, 5, state.contam > 0 ? C.badge : '#9a8666', 'end');
+  } else {
+    drawWrapped(KO ? 'U로 자동화를 가동하세요. 3단계 라인이 병렬로 웨이퍼를 출하합니다.' : 'Press U to start. A 3-stage line ships wafers in parallel.', mx+18, y+6, mw-36, 5, '#7a5838', 9);
+  }
+
+  // footer controls
+  const fy = my + mh - 28;
+  R(mx+12, fy, mw-24, 20, '#3a2818'); R(mx+12, fy, mw-24, 1, '#6c4828');
+  txt(a.unlocked ? (KO ? '가동됨 ✓' : 'online ✓') : 'U: ' + (KO ? '가동 (' : 'unlock (') + AUTO.unlockCost + ' Si)', mx+20, fy+8, 5, a.unlocked ? '#7a9a6a' : C.badge);
+  txt('O: ' + (a.on ? (KO ? '정지' : 'pause') : (KO ? '가동' : 'run')), mx+mw-20, fy+8, 5, '#cfe0a0', 'end');
+  txt(KO ? '↑↓ 선택  Enter 증설  O 가동  M 정비  P 닫기' : '↑↓ select  Enter line  O on/off  M clean  P close',
+      mx+mw/2, fy+16, 5, '#9a7850', 'center');
+}
+
+// ---- contracts: order board overlay (C) + fab status pill ----
+function drawContractPill(){
+  const a = state.contracts.active;
+  if (!a.length) return;
+  let dmin = Infinity; for (const c of a) dmin = Math.min(dmin, c.deadline - state.day);
+  const label = '📋 ' + a.length + (dmin < Infinity ? ('  D-' + dmin) : '');
+  const w = label.length * 6 + 16, x = W - w - 4, y = 104;
+  R(x, y, w, 13, C.wood); R(x, y, w, 1, C.woodHi); R(x, y+12, w, 1, C.woodDk);
+  R(x+4, y+5, 4, 4, dmin <= 0 ? C.red : dmin <= 1 ? C.badge : C.grnHi);
+  txt(label, x+12, y+9, 5, C.parchment);
+  txt('C', x+w-4, y+9, 5, C.badge, 'end');
+}
+function drawContracts(){
+  if (!state.contracts.open) return;
+  const c = state.contracts, KO = state.lang !== 'en';
+  ctx.fillStyle = 'rgba(8,10,18,0.84)'; ctx.fillRect(0, 0, W, H);
+  const mw = 424, mh = 256, mx = (W - mw) / 2, my = (H - mh) / 2;
+  R(mx-3, my-3, mw+6, mh+6, '#c89858');
+  R(mx, my, mw, mh, '#f4ecd4');
+  R(mx, my, mw, 3, '#fff8e8'); R(mx, my+mh-3, mw, 3, '#c8bca0');
+  txt(KO ? '📋 계약 보드' : '📋 Contract Board', mx+mw/2, my+15, 8, '#2a1c10', 'center');
+  R(mx+12, my+20, mw-24, 1, '#c8bca0');
+
+  // ----- ACTIVE -----
+  txt((KO ? '진행 중' : 'Active') + '  ' + c.active.length + '/' + CONTRACT.maxActive, mx+18, my+31, 6, '#7a5838');
+  let y = my + 38; const rowH = 24;
+  if (!c.active.length){
+    txt(KO ? '수락한 계약이 없습니다.' : 'No active contracts.', mx+30, y+6, 5, '#9a8666');
+    y += rowH;
+  } else {
+    for (const job of c.active){
+      const nm = KO ? job.client[0] : job.client[1];
+      txt(nm, mx+30, y+5, 6, '#2a1c10');
+      txt('[' + QTAG[job.minQ][KO?0:1] + ']', mx+30, y+14, 5, qTagCol(job.minQ));
+      const pbx = mx+150, pbw = 116, frac = Math.min(1, job.progress / job.qty);
+      R(pbx, y+3, pbw, 7, '#d8ccb0'); R(pbx, y+3, Math.round(pbw*frac), 7, '#3a9a5a');
+      txt(job.progress + '/' + job.qty, pbx+pbw/2, y+9, 5, '#2a1c10', 'center');
+      const dleft = job.deadline - state.day;
+      txt('D-' + dleft, pbx+pbw+28, y+8, 6, dleft <= 0 ? C.red : dleft <= 1 ? '#a85820' : '#5a4632', 'center');
+      txt('+' + job.reward, mx+mw-16, y+8, 6, '#a85820', 'end');
+      y += rowH;
+    }
+  }
+
+  // ----- AVAILABLE -----
+  R(mx+12, y, mw-24, 1, '#e0d6bc'); y += 8;
+  txt(KO ? '의뢰 (수락 가능)' : 'Available orders', mx+18, y+6, 6, '#7a5838'); y += 12;
+  if (!c.available.length){
+    txt(KO ? '새 의뢰는 다음 날 들어옵니다 (R).' : 'New orders arrive next day (R).', mx+30, y+6, 5, '#9a8666');
+    y += rowH;
+  } else {
+    for (let i=0;i<c.available.length;i++){
+      const job = c.available[i], sel = c.sel === i;
+      if (sel){ R(mx+12, y-2, mw-24, rowH-2, '#ece2c8'); txt('▶', mx+16, y+8, 6, '#a85820'); }
+      const nm = KO ? job.client[0] : job.client[1];
+      txt(nm, mx+30, y+5, 6, '#2a1c10');
+      txt('[' + QTAG[job.minQ][KO?0:1] + ']', mx+30, y+14, 5, qTagCol(job.minQ));
+      txt((KO ? '물량 ' : 'qty ') + job.qty, mx+150, y+8, 6, '#2a1c10');
+      txt((KO ? '납기 ' : 'due ') + job.days + (KO ? '일' : 'd'), mx+232, y+8, 6, job.rush ? '#a85820' : '#5a4632');
+      if (job.rush) txt(KO ? '급' : '!', mx+232-10, y+8, 6, C.red);
+      txt('+' + job.reward + ' Si', mx+mw-16, y+8, 6, '#a85820', 'end');
+      y += rowH;
+    }
+  }
+
+  // footer
+  const fy = my + mh - 28;
+  R(mx+12, fy, mw-24, 20, '#3a2818'); R(mx+12, fy, mw-24, 1, '#6c4828');
+  const full = c.active.length >= CONTRACT.maxActive;
+  txt(full ? (KO ? '슬롯 가득 (최대 3)' : 'slots full (max 3)') : (KO ? 'Enter: 선택 의뢰 수락' : 'Enter: accept order'),
+      mx+20, fy+8, 5, full ? '#9a8666' : C.badge);
+  txt((KO ? '완료 ' : 'done ') + c.completed + '  ·  ' + (KO ? '실패 ' : 'missed ') + c.failed, mx+mw-20, fy+8, 5, '#cfe0a0', 'end');
+  txt(KO ? '↑↓ 선택   Enter 수락   C/Esc 닫기' : '↑↓ select   Enter accept   C/Esc close',
+      mx+mw/2, fy+16, 5, '#9a7850', 'center');
+}
+
+// ---- tech tree overlay (T) ----
+function drawTech(){
+  if (!state.tech.open) return;
+  const KO = state.lang !== 'en';
+  ctx.fillStyle = 'rgba(8,10,18,0.84)'; ctx.fillRect(0, 0, W, H);
+  const mw = 424, mh = 256, mx = (W - mw) / 2, my = (H - mh) / 2;
+  R(mx-3, my-3, mw+6, mh+6, '#c89858');
+  R(mx, my, mw, mh, '#f4ecd4');
+  R(mx, my, mw, 3, '#fff8e8'); R(mx, my+mh-3, mw, 3, '#c8bca0');
+  txt(KO ? '🔬 기술 — 트레이드오프' : '🔬 Tech — Tradeoffs', mx+mw/2, my+15, 8, '#2a1c10', 'center');
+  R(mx+12, my+20, mw-24, 1, '#c8bca0');
+
+  let y = my + 30, curGroup = '__init__';
+  for (let i=0;i<TECHS.length;i++){
+    const n = TECHS[i];
+    if (n.group !== curGroup){
+      curGroup = n.group;
+      const g = TECH_GROUPS.find(gg => gg[0] === n.group);
+      if (g) txt(KO ? g[1] : g[2], mx+18, y+6, 5, '#a07840');
+      y += 11;
+    }
+    const sel = state.tech.sel === i;
+    const owned = !!state.tech.owned[n.id];
+    const on = !!state.tech.on[n.id];
+    const rowH = 20;
+    if (sel){ R(mx+12, y-1, mw-24, rowH-2, '#ece2c8'); txt('▶', mx+16, y+7, 6, '#a85820'); }
+    R(mx+26, y+4, 5, 5, on ? '#2e8a4a' : owned ? '#b0a488' : '#cdbfa2');
+    txt(KO ? n.ko : n.en, mx+36, y+6, 6, '#2a1c10');
+    txt('+ ' + (KO ? n.plusKo : n.plusEn), mx+36, y+15, 5, '#2e8a4a');
+    txt('− ' + (KO ? n.minusKo : n.minusEn), mx+212, y+15, 5, '#b05030');
+    if (!owned) txt((KO ? '도입 ' : 'get ') + n.cost + ' Si', mx+mw-16, y+8, 6, state.silicon >= n.cost ? C.badge : C.red, 'end');
+    else txt(on ? 'ON' : 'OFF', mx+mw-16, y+8, 6, on ? '#2e8a4a' : '#9a8666', 'end');
+    y += rowH;
+  }
+
+  const fy = my + mh - 28;
+  R(mx+12, fy, mw-24, 20, '#3a2818'); R(mx+12, fy, mw-24, 1, '#6c4828');
+  const cur = TECHS[state.tech.sel] || TECHS[0], curOwned = !!state.tech.owned[cur.id];
+  txt(curOwned ? (KO ? 'Enter: ON/OFF 전환' : 'Enter: toggle ON/OFF') : (KO ? 'Enter: 도입 (' + cur.cost + ' Si)' : 'Enter: adopt (' + cur.cost + ' Si)'),
+      mx+20, fy+8, 5, C.badge);
+  txt(KO ? '같은 그룹은 하나만 활성' : 'one per group active', mx+mw-20, fy+8, 5, '#cfe0a0', 'end');
+  txt(KO ? '↑↓ 선택   Enter 도입/전환   T/Esc 닫기' : '↑↓ select   Enter adopt/toggle   T/Esc close',
+      mx+mw/2, fy+16, 5, '#9a7850', 'center');
+}
+
+// ---- contamination status pill (fab HUD) ----
+function drawContamPill(){
+  if (!state.auto.unlocked) return;   // only matters once the auto line exists
+  const v = Math.round(state.contam);
+  const col = v >= 75 ? C.red : v >= 50 ? C.badge : C.grnHi;
+  const blink = v >= 75 && ((state.t>>4)&1);
+  const label = '🧪 ' + v + '%';
+  const w = label.length * 6 + 16, x = W - w - 4, y = 120;
+  R(x, y, w, 13, C.wood); R(x, y, w, 1, C.woodHi); R(x, y+12, w, 1, C.woodDk);
+  R(x+4, y+5, 4, 4, blink ? '#ffd0c0' : col);
+  txt(label, x+12, y+9, 5, v >= 75 ? '#ffd9cc' : C.parchment);
+}
+
 function drawWrapped(text, x, y, maxW, size, color, lineH){
   text = t(text);
   const charW = size * 1.18;
@@ -1813,6 +2131,350 @@ function tickRush(){
 }
 
 // ============================================================
+//  AUTOMATION (Phase 1–2) — a 3-STAGE auto production line:
+//    LITHO → ETCH → QA·PACK.  Each stage has parallel "lines"
+//    (capacity) and a WIP buffer feeds the next. The slowest stage
+//    is the BOTTLENECK — it caps total throughput while the upstream
+//    buffer backs up and downstream lines starve. Add lines to the
+//    bottleneck to raise output. Never touches the manual machines,
+//    so hand-play stays the premium path to PERFECT. Lines handle
+//    VOLUME; auto ships count toward fab scale, not combos/quests.
+// ============================================================
+function L2(ko, en){ return state.lang === 'en' ? en : ko; }
+const AUTO = {
+  unlockCost: 120,    // Si to switch the automation program on
+  maxLines: 5,        // max parallel lines per stage
+  buffMax: 12,        // WIP buffer cap between stages (creates backpressure)
+  powerPerWafer: 5,   // power drained per auto-shipped wafer
+  stages: [
+    { key:'litho', ko:'노광',      en:'Litho',   rate:4, lineBase:90, lineStep:80 },
+    { key:'etch',  ko:'식각',      en:'Etch',    rate:6, lineBase:70, lineStep:60 },
+    { key:'pack',  ko:'검사·출하', en:'QA·Pack', rate:8, lineBase:60, lineStep:50 },
+  ],
+};
+function autoPowerCost(){ return Math.max(1, Math.round(AUTO.powerPerWafer * (state.research.done.eco ? 0.7 : 1) * techPowerMul())); }
+function autoQualityRoll(){
+  const m = techAutoQualityMul() * contamYieldMul();
+  const pPerfect = Math.max(0, Math.min(0.5, 0.03 * m));
+  const pGood = Math.max(pPerfect, Math.min(0.9, 0.15 * m));
+  const r = Math.random();
+  if (r < pPerfect) return 2;
+  if (r < pGood) return 1;
+  return 0;
+}
+// per-stage throughput in wafers/min (lines × base × upgrade/research mods)
+function stageRate(i){
+  const s = AUTO.stages[i];
+  let m = 1;
+  if (i === 0) m += 0.22 * state.upgrades.lithoBoost;   // litho speed upgrade
+  if (i === 1) m += 0.22 * state.upgrades.etchBoost;    // etch speed upgrade
+  if (state.research.done.autoAlign) m *= 1.20;         // AI auto-align research
+  return s.rate * state.auto.lines[i] * m * techAutoRateMul();
+}
+// achievable ship rate = the slowest stage (the bottleneck caps everything)
+function autoThroughput(){
+  if (!state.auto.unlocked || !state.auto.on) return 0;
+  let m = stageRate(0);
+  for (let i=1;i<3;i++) m = Math.min(m, stageRate(i));
+  return +m.toFixed(1);
+}
+function autoBottleneck(){
+  let bi=0, br=stageRate(0);
+  for (let i=1;i<3;i++){ const r=stageRate(i); if (r < br){ br=r; bi=i; } }
+  return bi;
+}
+function autoLineCost(i){ const s = AUTO.stages[i]; return s.lineBase + s.lineStep * (state.auto.lines[i]-1); }
+function autoUnlock(){
+  if (state.auto.unlocked) return;
+  if (state.silicon < AUTO.unlockCost){ speak('self', L2('Si 부족 ('+AUTO.unlockCost+' 필요)','Need '+AUTO.unlockCost+' Si'), 90); return; }
+  state.silicon -= AUTO.unlockCost;
+  state.auto.unlocked = true; state.auto.on = true;
+  state.auto.lines = [1,1,1];
+  unlock('AUTO_UNLOCK', L2('⚙ 자동화 가동!','⚙ Automation online!'), 0);
+  speak('self', L2('⚙ 자동 라인 가동! (노광→식각→출하)','⚙ Auto-line online! (Litho→Etch→Pack)'), 150);
+}
+function autoBuyLine(i){
+  const a = state.auto;
+  if (!a.unlocked){ autoUnlock(); return; }
+  if (a.lines[i] >= AUTO.maxLines){ speak('self', L2('라인 최대','Lines maxed'), 80); return; }
+  const cost = autoLineCost(i);
+  if (state.silicon < cost){ speak('self', L2('Si 부족 ('+cost+' 필요)','Need '+cost+' Si'), 90); return; }
+  state.silicon -= cost; a.lines[i]++; a.on = true;
+  const s = AUTO.stages[i];
+  if (!state.achv.AUTO_LINE) unlock('AUTO_LINE', L2('🏭 라인 증설!','🏭 Line added!'), 0);
+  speak('self', L2(s.ko+' 라인 +1 (x'+a.lines[i]+')', s.en+' line +1 (x'+a.lines[i]+')'), 120);
+}
+function autoToggle(){
+  if (!state.auto.unlocked){ speak('self', L2('먼저 자동화 가동 필요','Unlock automation first'), 90); return; }
+  state.auto.on = !state.auto.on;
+  speak('self', state.auto.on ? L2('⚙ 자동화 ON','⚙ Automation ON') : L2('⚙ 자동화 OFF','⚙ Automation OFF'), 90);
+}
+function tickAuto(){
+  const a = state.auto;
+  if (!a.unlocked || !a.on) return;
+  if (state.won || state.ending) return;
+  const rL = stageRate(0)/3600, rE = stageRate(1)/3600, rP = stageRate(2)/3600;   // wafers per frame
+  // LITHO: infinite raw → buffer 0 (capped = backpressure)
+  a.buf[0] = Math.min(AUTO.buffMax, a.buf[0] + rL);
+  // ETCH: buffer 0 → buffer 1
+  { const move = Math.min(rE, a.buf[0], AUTO.buffMax - a.buf[1]); a.buf[0] -= move; a.buf[1] += move; }
+  // QA·PACK: buffer 1 → packer, then ship whole wafers (power-limited)
+  { const move = Math.min(rP, a.buf[1]); a.buf[1] -= move; a.prog = Math.min(AUTO.buffMax, a.prog + move); }
+  const cost = autoPowerCost();
+  let shippedNow = 0, sumR = 0, scrapNow = 0;
+  while (a.prog >= 1){
+    if (state.power < cost){ a.stalled = true; break; }
+    state.power = Math.max(0, state.power - cost);
+    a.prog -= 1;
+    if (state.contam > CONTAM.warnAt && Math.random() < ((state.contam - CONTAM.warnAt) / (100 - CONTAM.warnAt)) * 0.4){ a.scrapped++; scrapNow++; continue; }
+    const q = autoQualityRoll();
+    const base = fabInfo().base + (state.research.done.nextNode ? 4 : 0);
+    const reward = Math.max(1, Math.round(base * qualityMult(q) * 0.85));
+    gainSi(reward); a.siEarned += reward; a.shipped++;
+    if (q === 2) a.perfect++; else if (q === 1) a.good++;
+    state.shipTotal++; shippedNow++; sumR += reward;
+    deliverToContracts(q);   // auto output also fills contracts (Phase 3)
+  }
+  if (shippedNow > 0){
+    a.stalled = false; a.lastShipT = state.t;
+    if (state.scene === 'fab') spawnFloater(448, 196, '+' + sumR + ' ⚙', '#fff2bc', { size: 6, life: 40 });
+  }
+  // contamination accrues from everything the line processed this frame (Phase 5)
+  const processed = shippedNow + scrapNow;
+  if (processed > 0) state.contam = Math.min(100, state.contam + processed * CONTAM.perWafer * techContamMul());
+  if (a.on) state.contam = Math.min(100, state.contam + CONTAM.idleRise * techContamMul());
+  if (state.contam >= CONTAM.warnAt && !state._contamWarn){ state._contamWarn = true; toast(L2('⚠ 오염도 높음 — 정비 필요 (P→M)','⚠ Contamination high — maintenance (P→M)'), 2600); }
+  if (state.contam < CONTAM.warnAt - 15) state._contamWarn = false;
+  a.bottleneck = autoBottleneck();
+}
+
+// ============================================================
+//  CONTRACTS (Phase 3) — an order market layered over fixed-price
+//  shipping. Accept orders (qty · min grade · deadline · reward);
+//  every shipped wafer (manual OR auto) that meets a grade routes to
+//  the most demanding active contract it qualifies for, paying a
+//  small per-wafer fee and a big bonus on completion. Base ship Si
+//  is unchanged — contracts are the growth engine on top.
+// ============================================================
+const CONTRACT = { maxActive: 3, boardSize: 3 };
+const CLIENTS = [
+  ['한빛전자','Hanbit Elec'], ['대성반도체','Daesung Semi'], ['누리테크','Nuri Tech'],
+  ['상록시스템','Sangrok Sys'], ['진우일렉트로닉스','Jinwoo Elec'], ['세영디스플레이','Seyoung Disp'],
+  ['고려마이크로','Koryo Micro'], ['한결소자','Hangyeol Devices'],
+];
+const QTAG = [['일반','N'], ['우수','G'], ['완벽','P']];   // min-grade label (KO short / EN short)
+function qTagCol(q){ return q===2 ? '#a85820' : q===1 ? '#2e8a4a' : '#6a5838'; }
+function pickWeightedQ(){ const r = Math.random(); if (r < 0.13) return 2; if (r < 0.45) return 1; return 0; }
+function genContract(){
+  const c = state.contracts;
+  const fab = state.fabLevel;
+  const minQ = pickWeightedQ();
+  const qty = 4 + fab*2 + ((Math.random()*7)|0);
+  const tight = Math.random() < 0.30;
+  const days = Math.max(1, (tight ? (1 + ((Math.random()*2)|0)) : (3 + ((Math.random()*3)|0))) + techDeadlineDelta());
+  const base = fabInfo().base;
+  const qPrem = 1 + minQ*0.7;
+  const rushPrem = tight ? 1.5 : 1;
+  const reward = Math.round(qty * base * qPrem * rushPrem * 1.4 * techContractRewardMul());
+  const perWafer = Math.max(1, Math.round(base * 0.4));
+  const cl = CLIENTS[(Math.random()*CLIENTS.length)|0];
+  return { id:(++c._id), client:cl, qty, minQ, reward, perWafer, days, deadline: state.day + days, progress:0, rush:tight };
+}
+function seedContracts(){
+  const c = state.contracts;
+  c.available = [];
+  for (let i=0;i<CONTRACT.boardSize;i++) c.available.push(genContract());
+  c.sel = 0;
+}
+function acceptContract(i){
+  const c = state.contracts;
+  if (i < 0 || i >= c.available.length){ return; }
+  if (c.active.length >= CONTRACT.maxActive){ speak('self', L2('계약 슬롯 가득 (최대 3)','Contract slots full (max 3)'), 110); return; }
+  const job = c.available.splice(i,1)[0];
+  job.deadline = state.day + job.days;   // refresh deadline from acceptance day
+  c.active.push(job);
+  if (c.sel >= c.available.length) c.sel = Math.max(0, c.available.length-1);
+  if (!state.achv.CONTRACT_TAKE) unlock('CONTRACT_TAKE', L2('📋 첫 계약 수락','📋 First contract'), 0);
+  speak('self', L2('📋 계약 수락 — ' + (state.lang==='en'?job.client[1]:job.client[0]), '📋 Accepted — ' + (state.lang==='en'?job.client[1]:job.client[0])), 120);
+}
+// route one shipped wafer of quality q to the best matching active contract
+function deliverToContracts(q){
+  const a = state.contracts.active;
+  let best = null;
+  for (const c of a){
+    if (c.progress >= c.qty) continue;
+    if (c.minQ <= q){
+      if (!best || c.minQ > best.minQ || (c.minQ === best.minQ && c.deadline < best.deadline)) best = c;
+    }
+  }
+  if (!best) return false;
+  best.progress++;
+  if (best.perWafer) gainSi(best.perWafer);
+  if (best.progress >= best.qty) completeContract(best);
+  return true;
+}
+function completeContract(c){
+  const a = state.contracts.active;
+  const idx = a.indexOf(c);
+  if (idx >= 0) a.splice(idx,1);
+  state.contracts.completed++;
+  gainSi(c.reward);
+  state.krw += Math.round(c.reward * 0.3);
+  if (!state.achv.CONTRACT_DONE) unlock('CONTRACT_DONE', L2('🤝 첫 계약 완료!','🤝 First contract done!'), 0);
+  if (state.contracts.completed === 10) unlock('CONTRACT_10', L2('🏆 계약 10건 완료','🏆 10 contracts done'), 0);
+  spawnFloater(240, 120, '📋 +' + c.reward + ' Si', '#fff2bc', { size: 9, life: 60 });
+  spawnBurst(240, 124, [C.badge, '#fff2bc', C.grnHi, '#ffffff'], 20, { spd: 2.0, up: 0.6 });
+  addShake(3.2);
+  const nm = state.lang==='en' ? c.client[1] : c.client[0];
+  toast(L2('📋 계약 완료!<br>' + nm + '  +' + c.reward + ' Si','📋 Contract complete!<br>' + nm + '  +' + c.reward + ' Si'), 2600);
+}
+// called once per new day from rest(): expire overdue, refresh the board
+function tickContractsDaily(){
+  const c = state.contracts;
+  for (let i = c.active.length - 1; i >= 0; i--){
+    if (state.day > c.active[i].deadline){
+      const job = c.active.splice(i,1)[0];
+      c.failed++;
+      const nm = state.lang==='en' ? job.client[1] : job.client[0];
+      setTimeout(()=>{ toast(L2('⏰ 계약 미이행<br>' + nm,'⏰ Contract missed<br>' + nm), 2200); }, 300);
+    }
+  }
+  seedContracts();
+}
+
+// ============================================================
+//  TECH TREE (Phase 4) — tradeoff policies. Each node grants a
+//  benefit AND a drawback, so there is no strictly-best build.
+//  Nodes in the same exclusive group can't both be active (commit
+//  to speed OR yield, output OR efficiency, reward OR slack). Owned
+//  nodes can be freely toggled on/off to experiment. Modifiers read
+//  live by the auto line (stageRate / quality / power) and the
+//  contract market (reward / deadline), plus contamination (Phase 5).
+// ============================================================
+const TECHS = [
+  { id:'overclock',  group:'stepper', cost:80,
+    ko:'스테퍼 오버클럭', en:'Stepper Overclock', pos:[0,0],
+    plusKo:'자동 노광·식각 속도 +25%', minusKo:'자동 수율 ↓ (불량↑)',
+    plusEn:'auto litho/etch +25%',      minusEn:'auto yield ↓' },
+  { id:'precision',  group:'stepper', cost:80,
+    ko:'정밀 정렬 모드',  en:'Precision Mode',     pos:[1,0],
+    plusKo:'자동 우수·완벽 확률 ↑',  minusKo:'자동 속도 −15%',
+    plusEn:'auto Good/PERFECT ↑',     minusEn:'auto speed −15%' },
+  { id:'turbo',      group:'power',   cost:90,
+    ko:'터보 출력',       en:'Turbo Power',        pos:[0,1],
+    plusKo:'자동 처리량 +20%',       minusKo:'웨이퍼당 전력 +50%',
+    plusEn:'throughput +20%',         minusEn:'power/wafer +50%' },
+  { id:'lowpower',   group:'power',   cost:90,
+    ko:'저전력 구동',     en:'Low-Power Drive',    pos:[1,1],
+    plusKo:'웨이퍼당 전력 −35%',     minusKo:'자동 처리량 −10%',
+    plusEn:'power/wafer −35%',        minusEn:'throughput −10%' },
+  { id:'aggressive', group:'sales',   cost:100,
+    ko:'공격적 수주',     en:'Aggressive Bidding', pos:[0,2],
+    plusKo:'계약 보상 +30%',         minusKo:'납기 −1일 (빡빡)',
+    plusEn:'contract reward +30%',    minusEn:'deadline −1 day' },
+  { id:'conservative',group:'sales',  cost:100,
+    ko:'안정적 수주',     en:'Conservative Bidding', pos:[1,2],
+    plusKo:'납기 +1일 (여유)',       minusKo:'계약 보상 −15%',
+    plusEn:'deadline +1 day',         minusEn:'contract reward −15%' },
+  { id:'cleanauto',  group:null,      cost:110,
+    ko:'자동 정화 시스템', en:'Auto-Purge System',  pos:[0,3],
+    plusKo:'오염 증가 −40%',         minusKo:'자동 처리량 −8%',
+    plusEn:'contamination +rate −40%', minusEn:'throughput −8%' },
+];
+const TECH_GROUPS = [
+  ['stepper', '스테퍼 — 속도 vs 수율',   'Steppers — speed vs yield'],
+  ['power',   '전력 — 출력 vs 효율',     'Power — output vs efficiency'],
+  ['sales',   '수주 — 보상 vs 납기',     'Sales — reward vs deadline'],
+  [null,      '청정 — 오염 vs 처리량',   'Cleanroom — fouling vs throughput'],
+];
+function techOn(id){ return !!state.tech.on[id]; }
+function techNode(id){ return TECHS.find(n => n.id === id); }
+function techAutoRateMul(){
+  let m = 1;
+  if (techOn('overclock')) m *= 1.25;
+  if (techOn('precision'))  m *= 0.85;
+  if (techOn('turbo'))      m *= 1.20;
+  if (techOn('lowpower'))   m *= 0.90;
+  if (techOn('cleanauto'))  m *= 0.92;
+  return m;
+}
+function techAutoQualityMul(){   // multiplier on Good+PERFECT probability
+  let m = 1;
+  if (techOn('overclock')) m *= 0.5;
+  if (techOn('precision'))  m *= 1.6;
+  return m;
+}
+function techPowerMul(){
+  let m = 1;
+  if (techOn('turbo'))    m *= 1.5;
+  if (techOn('lowpower')) m *= 0.65;
+  return m;
+}
+function techContractRewardMul(){
+  let m = 1;
+  if (techOn('aggressive'))   m *= 1.3;
+  if (techOn('conservative')) m *= 0.85;
+  return m;
+}
+function techDeadlineDelta(){
+  let d = 0;
+  if (techOn('aggressive'))   d -= 1;
+  if (techOn('conservative')) d += 1;
+  return d;
+}
+function techContamMul(){ return techOn('cleanauto') ? 0.6 : 1; }   // read by Phase 5
+function techSetOn(node, val){
+  state.tech.on[node.id] = val;
+  if (val && node.group){
+    for (const o of TECHS) if (o !== node && o.group === node.group) state.tech.on[o.id] = false;
+  }
+}
+function techBuy(i){
+  const node = TECHS[i];
+  if (!node) return;
+  if (!state.tech.owned[node.id]){
+    if (state.silicon < node.cost){ speak('self', L2('Si 부족 ('+node.cost+' 필요)','Need '+node.cost+' Si'), 90); return; }
+    state.silicon -= node.cost;
+    state.tech.owned[node.id] = true;
+    techSetOn(node, true);
+    if (!state.achv.TECH_1) unlock('TECH_1', L2('🔬 첫 기술 도입','🔬 First tech adopted'), 0);
+    speak('self', L2('🔬 ' + node.ko + ' 도입', '🔬 ' + node.en + ' adopted'), 120);
+  } else {
+    techSetOn(node, !state.tech.on[node.id]);
+    speak('self', state.tech.on[node.id] ? L2(node.ko+' ON', node.en+' ON') : L2(node.ko+' OFF', node.en+' OFF'), 80);
+  }
+}
+
+// ============================================================
+//  CONTAMINATION / MAINTENANCE (Phase 5) — running the auto line
+//  fouls the cleanroom. Particles raise contamination, which lowers
+//  auto yield and, past a threshold, scraps wafers (power spent, no
+//  Si). Purge it from the dashboard (M, costs Si) or sleep it off
+//  (R, overnight). The 'cleanauto' tech slows fouling. This caps
+//  mindless auto-scaling and gives rest & attention real weight.
+// ============================================================
+const CONTAM = {
+  perWafer: 0.8,    // contamination per auto wafer processed (shipped or scrapped)
+  idleRise: 0.012,  // passive rise per frame while the line is on
+  manual:   0.25,   // per manually shipped wafer (hand work is cleaner)
+  restClean: 35,    // removed overnight on rest()
+  warnAt:   75,     // warning + scrap threshold
+  purgeAmt: 60,     // contamination removed by a purge
+};
+function contamYieldMul(){ return 1 - (Math.max(0, Math.min(100, state.contam)) / 100) * 0.5; }   // 1.0 clean → 0.5 filthy
+function autoPurge(){
+  if (state.contam <= 0){ speak('self', L2('이미 깨끗합니다','Already clean'), 70); return; }
+  const cost = Math.round(15 + state.contam * 0.6);
+  if (state.silicon < cost){ speak('self', L2('Si 부족 ('+cost+' 필요)','Need '+cost+' Si'), 90); return; }
+  state.silicon -= cost;
+  state.contam = Math.max(0, state.contam - CONTAM.purgeAmt);
+  state._contamWarn = false;
+  if (!state.achv.CLEAN_1) unlock('CLEAN_1', L2('🧹 첫 정비','🧹 First maintenance'), 0);
+  spawnFloater(240, 130, L2('🧹 정비 −' + CONTAM.purgeAmt, '🧹 clean −' + CONTAM.purgeAmt), C.grnHi, { size: 7, life: 45 });
+  toast(L2('🧹 정비 완료  (−' + cost + ' Si)','🧹 Maintenance done  (−' + cost + ' Si)'), 1800);
+}
+
+// ============================================================
 //  UPDATE  (per frame)
 // ============================================================
 
@@ -1824,8 +2486,12 @@ function update(){
   if (state.questLogOpen){ state.pmove=false; state.pwalk=0; return; }  // quest log pauses the world
   if (state.compendiumOpen){ state.pmove=false; state.pwalk=0; return; }  // 도감 pauses the world
   if (state.npcDialog){ state.pmove=false; state.pwalk=0; return; }     // dialogue pauses the world
+  if (state.dashOpen){ state.pmove=false; state.pwalk=0; return; }      // dashboard pauses the world
+  if (state.contracts.open){ state.pmove=false; state.pwalk=0; return; } // contracts board pauses the world
+  if (state.tech.open){ state.pmove=false; state.pwalk=0; return; }      // tech tree pauses the world
   tickClock();
   tickAchv();
+  tickAuto();
   // expire messages (both scenes)
   if (state.msg && state.t > state.msg.until) state.msg = null;
   if (state.speech && state.t > state.speech.until) state.speech = null;
@@ -5980,6 +6646,9 @@ function renderFab(){
   drawQuest();
   drawRush();
   drawCombo();
+  if (!state.dashOpen) drawAutoPill();
+  if (!state.dashOpen) drawContractPill();
+  if (!state.dashOpen) drawContamPill();
   drawPrompt();
   drawMsg();
   drawMiniGame();
@@ -6052,6 +6721,10 @@ function frame(){
   drawQuestLog();
   // 도감 overlay
   drawCompendium();
+  // automation dashboard
+  drawDashboard();
+  drawContracts();
+  drawTech();
   // NPC dialogue box
   drawNpcDialog();
 
@@ -6067,8 +6740,8 @@ function frame(){
 // Welcome
 // ---- language (i18n) ----
 const HINT_HTML = {
-  ko: '<b>이동</b> 방향키/WASD &nbsp;·&nbsp; <b>상호작용</b> Space/E &nbsp;·&nbsp; <b>버리기</b> Q &nbsp;·&nbsp; <b>휴식</b> R &nbsp;·&nbsp; <b>상점</b> B &nbsp;·&nbsp; <b>인벤토리</b> 1~8 &nbsp;·&nbsp; <b>퀘스트</b> L &nbsp;·&nbsp; <b>도감</b> K &nbsp;·&nbsp; <b>언어</b> G',
-  en: '<b>Move</b> Arrows/WASD &nbsp;·&nbsp; <b>Interact</b> Space/E &nbsp;·&nbsp; <b>Drop</b> Q &nbsp;·&nbsp; <b>Rest</b> R &nbsp;·&nbsp; <b>Shop</b> B &nbsp;·&nbsp; <b>Inventory</b> 1~8 &nbsp;·&nbsp; <b>Quests</b> L &nbsp;·&nbsp; <b>Compendium</b> K &nbsp;·&nbsp; <b>Language</b> G',
+  ko: '<b>이동</b> 방향키/WASD &nbsp;·&nbsp; <b>상호작용</b> Space/E &nbsp;·&nbsp; <b>버리기</b> Q &nbsp;·&nbsp; <b>휴식</b> R &nbsp;·&nbsp; <b>상점</b> B &nbsp;·&nbsp; <b>인벤토리</b> 1~8 &nbsp;·&nbsp; <b>퀘스트</b> L &nbsp;·&nbsp; <b>도감</b> K &nbsp;·&nbsp; <b>자동화</b> P &nbsp;·&nbsp; <b>계약</b> C &nbsp;·&nbsp; <b>기술</b> T &nbsp;·&nbsp; <b>언어</b> G',
+  en: '<b>Move</b> Arrows/WASD &nbsp;·&nbsp; <b>Interact</b> Space/E &nbsp;·&nbsp; <b>Drop</b> Q &nbsp;·&nbsp; <b>Rest</b> R &nbsp;·&nbsp; <b>Shop</b> B &nbsp;·&nbsp; <b>Inventory</b> 1~8 &nbsp;·&nbsp; <b>Quests</b> L &nbsp;·&nbsp; <b>Compendium</b> K &nbsp;·&nbsp; <b>Automation</b> P &nbsp;·&nbsp; <b>Contracts</b> C &nbsp;·&nbsp; <b>Tech</b> T &nbsp;·&nbsp; <b>Language</b> G',
 };
 function updateHintBar(){
   const el = document.getElementById('hintbar');
@@ -6139,6 +6812,7 @@ loadLang();
 updateHintBar();
 newQuest();
 initNpcQuests();
+seedContracts();
 rollWeather();
 setTimeout(() => {
   speak('npc', '오늘도 좋은 수율을!', 220);
