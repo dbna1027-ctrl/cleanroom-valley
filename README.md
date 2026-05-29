@@ -6,6 +6,9 @@ https://dbna1027-ctrl.github.io/cleanroom-valley/
 
 **Stardew Valley, except the farm is a semiconductor fab.**
 
+<img width="1835" height="857" alt="ChatGPT Image 2026년 5월 29일 오후 02_13_11" src="https://github.com/user-attachments/assets/785100a1-9cb9-415b-b5d5-23717ada64f0" />
+
+
 A cozy management + life sim where you suit up, run the cleanroom, chase yield, and grow a one-room startup into the nation's largest **GIGAFAB** — all in a single HTML file. No engine. No install. Just open it and play.
 
 ### ▶️ [**Play it now in your browser**](https://dbna1027-ctrl.github.io/cleanroom-valley/)
