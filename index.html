@@ -274,6 +274,8 @@ const state = {
   },
   relOpen: false,         // relationships board overlay (N)
   gowning: null,          // gowning ritual transition { active, t, dir, applied }
+  soundOn: true,          // master sound toggle (M)
+  musicOn: true,          // ambient BGM toggle
   npcDialog: null,        // { name, role, color, text } — bottom dialogue box
   // juice / game-feel
   floaters: [],           // rising +Si / PERFECT! texts
@@ -709,12 +711,20 @@ function normKey(e){
 window.addEventListener('keydown', e => {
   const k = normKey(e);
   keys[k] = true;
+  if (!Sound.ready) Sound.unlock();
   if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
 
   // Language menu owns all input while open
   if (state.langMenu){ handleLangMenuKey(k); return; }
   // Open the language menu any time
   if (k === 'g'){ openLangMenu(); return; }
+
+  // Mute / unmute (M); inside the dashboard, M is reserved for purge
+  if (k === 'm' && !state.dashOpen){
+    Sound.setOn(!state.soundOn);
+    toast(state.soundOn ? '🔊 ' + L2('소리 켜짐','Sound on') : '🔇 ' + L2('음소거','Muted'), 1300);
+    return;
+  }
 
   // Title screen — navigate + confirm
   if (state.titleScreen){
@@ -903,6 +913,7 @@ function cvsToLogical(e){
 }
 cvs.addEventListener('mousedown', e => {
   const p = cvsToLogical(e);
+  if (!Sound.ready) Sound.unlock();
   if (state.titleScreen){ if (titleHasSave && titleSel===0) loadGame(); else startGame(); return; }
   if (state.langMenu){ langMenuClick(p.x, p.y); return; }
   if (!state.qaGame || state.qaGame.result) return;
@@ -942,6 +953,7 @@ function speak(who, text, frames){
 //  SCENE TRANSITION  — fade to black, swap scene, fade back
 // ============================================================
 function switchScene(target){
+  sfx('door');
   if (state.fadeDir !== 0) return;
   state.sceneFrom = state.scene;
   state.pendingScene = target;
@@ -1094,6 +1106,7 @@ function tryInteract(){
     state.carryQ = 0;
     state.carryQA = null;
     speak('self', '출하 완료!', 90);
+    sfx('ship');
     state.temp += (Math.random()-0.5) * 0.6;
     state.temp = Math.max(20, Math.min(25, state.temp));
   }
@@ -1183,6 +1196,7 @@ function rest(){
     speak('self', 'Day ' + state.day + ' — 보급 완료!' + extra, 110);
   }
   saveGame();   // auto-save progress on rest
+  sfx('rest');
 }
 
 // ============================================================
@@ -1216,6 +1230,7 @@ function shopBuy(){
     else if (item.id === 'mask')   state.inventory.mask += 1;
     state.shopFlash = 24;
     speak('self', '구매 ✓', 60);
+    sfx('coin');
     unlock('FIRST_BUY', '🛒 첫 구매!', 0);
   } else {
     const lv = state.upgrades[item.id];
@@ -1314,6 +1329,7 @@ function resolveMiniGame(){
   }
   m.result = result;
   m.lockedAt = state.t;
+  sfx(result === 'perfect' ? 'perfect' : result === 'good' ? 'good' : 'scrap');
 
   const isLitho = m.type === 'litho';
   const ecoMult = state.research.done.eco ? 0.7 : 1;   // R&D: green process
@@ -1625,6 +1641,7 @@ function affAdd(id, n){
   if (after > before){
     const nm = NPC_BY_LOC[id] ? NPC_BY_LOC[id].npc : '';
     toast('💞 ' + L2(nm + '와(과) 더 가까워졌어요', 'Closer with ' + nm) + ' (' + L2(AFF_STAGE_NAME[after][0], AFF_STAGE_NAME[after][1]) + ')', 2200);
+    sfx('affinity');
     if (after >= 4) unlock('AFF_' + id, '💞 ' + nm + ': ' + L2('마음', 'Close'), 0);
   }
 }
@@ -2002,6 +2019,113 @@ function drawStory(){
 }
 
 // ============================================================
+//  SOUND — fully procedural Web Audio (no external files). SFX + gentle BGM.
+// ============================================================
+const Sound = {
+  ctx:null, master:null, sfxBus:null, musicBus:null, on:true, ready:false,
+  init(){
+    if (this.ctx) return;
+    try{
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      this.ctx = new AC();
+      this.master = this.ctx.createGain(); this.master.gain.value = 0.9; this.master.connect(this.ctx.destination);
+      this.sfxBus = this.ctx.createGain(); this.sfxBus.gain.value = 0.55; this.sfxBus.connect(this.master);
+      this.musicBus = this.ctx.createGain(); this.musicBus.gain.value = 0.16; this.musicBus.connect(this.master);
+    }catch(e){ this.ctx = null; }
+  },
+  unlock(){                 // call on first user gesture (browsers gate audio)
+    this.on = (state.soundOn !== false);
+    this.init();
+    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+    this.ready = true;
+    if (this.on && state.musicOn !== false) Music.start();
+  },
+  setOn(v){
+    this.on = v; state.soundOn = v;
+    if (!v) Music.stop();
+    else { this.init(); if (this.ctx && this.ctx.state==='suspended') this.ctx.resume(); if (state.musicOn !== false) Music.start(); }
+  },
+};
+function tone(o){
+  const c = Sound.ctx; if (!c || !Sound.on) return;
+  const t0 = c.currentTime + (o.when||0), dur = o.dur||0.12, vol = o.vol!=null?o.vol:0.4;
+  const osc = c.createOscillator(); osc.type = o.type||'sine';
+  osc.frequency.setValueAtTime(o.freq||440, t0);
+  if (o.slideTo) osc.frequency.exponentialRampToValueAtTime(o.slideTo, t0+dur);
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0+(o.attack||0.006));
+  g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  osc.connect(g); g.connect(o.bus||Sound.sfxBus);
+  osc.start(t0); osc.stop(t0+dur+0.03);
+}
+function noiseBurst(o){
+  const c = Sound.ctx; if (!c || !Sound.on) return;
+  const t0 = c.currentTime + (o.when||0), dur = o.dur||0.3, vol = o.vol!=null?o.vol:0.25;
+  const n = Math.max(1, Math.floor(c.sampleRate*dur));
+  const buf = c.createBuffer(1, n, c.sampleRate); const d = buf.getChannelData(0);
+  for (let i=0;i<n;i++) d[i] = Math.random()*2-1;
+  const src = c.createBufferSource(); src.buffer = buf;
+  const filt = c.createBiquadFilter(); filt.type = o.ftype||'bandpass';
+  filt.frequency.setValueAtTime(o.f0||1500, t0);
+  if (o.f1) filt.frequency.exponentialRampToValueAtTime(o.f1, t0+dur);
+  filt.Q.value = o.q||0.7;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0+0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  src.connect(filt); filt.connect(g); g.connect(Sound.sfxBus);
+  src.start(t0); src.stop(t0+dur+0.03);
+}
+function sfx(name){
+  if (!Sound.ctx || !Sound.on) return;
+  switch(name){
+    case 'move':    tone({freq:200,type:'square',dur:0.03,vol:0.05}); break;
+    case 'select':  tone({freq:520,type:'square',dur:0.04,vol:0.12}); break;
+    case 'confirm': tone({freq:620,type:'square',dur:0.06,vol:0.16}); tone({freq:940,type:'square',dur:0.07,vol:0.13,when:0.05}); break;
+    case 'cancel':  tone({freq:340,type:'square',dur:0.08,vol:0.12,slideTo:200}); break;
+    case 'deny':    tone({freq:170,type:'sawtooth',dur:0.16,vol:0.14,slideTo:110}); break;
+    case 'coin':    tone({freq:880,type:'square',dur:0.05,vol:0.16}); tone({freq:1320,type:'square',dur:0.09,vol:0.13,when:0.05}); break;
+    case 'ship':    tone({freq:740,type:'triangle',dur:0.08,vol:0.18}); tone({freq:1110,type:'triangle',dur:0.12,vol:0.15,when:0.07}); tone({freq:1480,type:'sine',dur:0.16,vol:0.12,when:0.13}); break;
+    case 'perfect': [660,880,1100,1320].forEach((f,i)=>tone({freq:f,type:'triangle',dur:0.13,vol:0.16,when:i*0.05})); break;
+    case 'good':    tone({freq:620,type:'triangle',dur:0.09,vol:0.15}); tone({freq:820,type:'triangle',dur:0.11,vol:0.12,when:0.06}); break;
+    case 'scrap':   noiseBurst({dur:0.18,vol:0.16,ftype:'lowpass',f0:900,f1:130}); tone({freq:130,type:'sawtooth',dur:0.2,vol:0.13,slideTo:70}); break;
+    case 'mine':    tone({freq:360,type:'square',dur:0.05,vol:0.13,slideTo:240}); noiseBurst({dur:0.05,vol:0.06,ftype:'highpass',f0:2500}); break;
+    case 'craft':   tone({freq:300,type:'sine',dur:0.12,vol:0.16,slideTo:560}); break;
+    case 'qaHit':   tone({freq:940,type:'square',dur:0.04,vol:0.13}); break;
+    case 'qaMiss':  tone({freq:200,type:'square',dur:0.09,vol:0.12,slideTo:150}); break;
+    case 'levelup': [523,659,784,1047].forEach((f,i)=>tone({freq:f,type:'triangle',dur:0.18,vol:0.18,when:i*0.1})); break;
+    case 'unlock':  tone({freq:784,type:'triangle',dur:0.1,vol:0.16}); tone({freq:1175,type:'triangle',dur:0.16,vol:0.13,when:0.09}); break;
+    case 'affinity':tone({freq:660,type:'sine',dur:0.14,vol:0.15}); tone({freq:990,type:'sine',dur:0.2,vol:0.12,when:0.09}); break;
+    case 'gownStep':tone({freq:460,type:'square',dur:0.04,vol:0.11}); break;
+    case 'air':     noiseBurst({dur:0.85,vol:0.2,ftype:'bandpass',f0:900,f1:2600,q:0.6}); break;
+    case 'clean':   tone({freq:880,type:'sine',dur:0.16,vol:0.17}); tone({freq:1320,type:'sine',dur:0.24,vol:0.13,when:0.11}); break;
+    case 'door':    noiseBurst({dur:0.12,vol:0.09,ftype:'lowpass',f0:700,f1:240}); break;
+    case 'rest':    tone({freq:392,type:'sine',dur:0.28,vol:0.14,slideTo:523}); break;
+    case 'start':   [523,784,1047].forEach((f,i)=>tone({freq:f,type:'triangle',dur:0.2,vol:0.17,when:i*0.11})); break;
+  }
+}
+const Music = {
+  on:false, timer:null, step:0, scale:[0,3,5,7,10],   // minor pentatonic — cozy
+  start(){ if (!Sound.ctx || this.on || !Sound.on) return; this.on = true; this.step = 0; this._loop(); },
+  stop(){ this.on = false; if (this.timer){ clearTimeout(this.timer); this.timer = null; } },
+  _loop(){
+    if (!this.on || !Sound.ctx || !Sound.on){ this.on = false; return; }
+    const root = 196; // G3
+    if (Math.random() < 0.7){
+      const deg = this.scale[Math.floor(Math.random()*this.scale.length)];
+      const oct = Math.random() < 0.4 ? 2 : 1;
+      tone({freq: root*Math.pow(2,(deg+oct*12)/12), type:'triangle', dur:1.1, vol:0.10, attack:0.08, bus:Sound.musicBus});
+    }
+    if (this.step % 4 === 0){
+      tone({freq: root/2, type:'sine', dur:3.2, vol:0.07, attack:0.4, bus:Sound.musicBus});
+      tone({freq: root/2*Math.pow(2,7/12), type:'sine', dur:3.2, vol:0.05, attack:0.4, bus:Sound.musicBus});
+    }
+    this.step++;
+    this.timer = setTimeout(()=>this._loop(), 620 + Math.floor(Math.random()*360));
+  },
+};
+
+// ============================================================
 //  SAVE SYSTEM — localStorage, auto-save on rest(), load on continue
 // ============================================================
 const SAVE_KEY = 'cleanroomValley_save';
@@ -2044,6 +2168,8 @@ function loadGame(){
     state.combo = 0; state.comboTimer = 0;
     state.scene = 'fab'; state.px = 232; state.py = 222;
     const el = document.getElementById('hintbar'); if (el) el.style.display = '';
+    Sound.on = (state.soundOn !== false);
+    if (Sound.ready){ if (Sound.on && state.musicOn !== false) Music.start(); else Music.stop(); }
     updateHintBar();
     return true;
   }catch(e){ console.warn('Load failed:', e); return false; }
@@ -2063,6 +2189,7 @@ function startGame(){
   if (!state.titleScreen) return;
   state.titleScreen = false;
   const el = document.getElementById('hintbar'); if (el) el.style.display = '';
+  sfx('start');
 }
 function drawTitle(){
   const KO = state.lang !== 'en';
@@ -2251,6 +2378,7 @@ function checkFabLevel(){
       triggerEnding('gigafab');
     } else {
       speak('self', '🏭 팹 승급! ' + info.name, 180);
+      sfx('levelup');
       setTimeout(() => {
         toast('🏭 FAB 등급 상승!<br>Lv.' + lv + '  ' + info.name +
               '<br><small>출하 기본 단가 ' + info.base + ' Si</small>', 3200);
@@ -2436,6 +2564,7 @@ function onShipped(q){
 function unlock(id, text, bonus){
   if (state.achv[id]) return;
   state.achv[id] = true;
+  sfx('unlock');
   state.achvQ.push({ text, until: state.t + 200, born: state.t });
   if (bonus) gainSi(bonus);
 }
@@ -5482,13 +5611,19 @@ function applyGown(){
   const g = state.gowning; if (!g || g.applied) return;
   g.applied = true;
   state.smockOn = !state.smockOn;
+  sfx(state.smockOn ? 'clean' : 'cancel');
   speak('self', state.smockOn ? '🥼 smock 착용 완료' : '👔 평상복으로', 110);
 }
 function tickGowning(){
   const g = state.gowning; if (!g) return;
   g.t++;
-  const DUR = GOWN_DUR[g.dir];
-  if (!g.applied && g.t / DUR >= gownApplyPoint(g.dir)) applyGown();
+  const DUR = GOWN_DUR[g.dir], p = g.t / DUR;
+  const lvl = g.dir==='on' ? (p>=0.10)+(p>=0.22)+(p>=0.34)+(p>=0.46)
+                           : 4 - ((p>=0.12)+(p>=0.24)+(p>=0.36)+(p>=0.48));
+  if (g._lvl == null) g._lvl = g.dir==='on' ? 0 : 4;
+  if (lvl !== g._lvl){ sfx('gownStep'); g._lvl = lvl; }
+  if (g.dir==='on' && !g._air && p >= 0.55){ g._air = true; sfx('air'); }
+  if (!g.applied && p >= gownApplyPoint(g.dir)) applyGown();
   if (g.t >= DUR){ if (!g.applied) applyGown(); state.gowning = null; }
 }
 function gowningSkip(){
@@ -5569,6 +5704,7 @@ function updateSmock(){
       state.carryQA = null;
       const tag = state.carryQ===1 ? 'Good 웨이퍼 완성!' : '실리콘 웨이퍼 완성';
       speak('self', '🟢 ' + tag + ' — smock 착용 후 팹으로', 170);
+      sfx('craft');
       spawnFloater(322, 150, tag, state.carryQ===1?C.grnHi:'#dfeaf2', { size:7, life:52 });
       spawnBurst(322, 154, ['#cfe8f4','#bfe0ec','#fff2bc'], 12, { spd:1.5, up:0.5 });
       addShake(1.6);
@@ -7265,8 +7401,8 @@ function frame(){
 // Welcome
 // ---- language (i18n) ----
 const HINT_HTML = {
-  ko: '<b>이동</b> 방향키/WASD &nbsp;·&nbsp; <b>상호작용</b> Space/E &nbsp;·&nbsp; <b>버리기</b> Q &nbsp;·&nbsp; <b>휴식</b> R &nbsp;·&nbsp; <b>상점</b> B &nbsp;·&nbsp; <b>인벤토리</b> 1~8 &nbsp;·&nbsp; <b>퀘스트</b> L &nbsp;·&nbsp; <b>도감</b> K &nbsp;·&nbsp; <b>자동화</b> P &nbsp;·&nbsp; <b>계약</b> C &nbsp;·&nbsp; <b>기술</b> T &nbsp;·&nbsp; <b>관계</b> N &nbsp;·&nbsp; <b>언어</b> G',
-  en: '<b>Move</b> Arrows/WASD &nbsp;·&nbsp; <b>Interact</b> Space/E &nbsp;·&nbsp; <b>Drop</b> Q &nbsp;·&nbsp; <b>Rest</b> R &nbsp;·&nbsp; <b>Shop</b> B &nbsp;·&nbsp; <b>Inventory</b> 1~8 &nbsp;·&nbsp; <b>Quests</b> L &nbsp;·&nbsp; <b>Compendium</b> K &nbsp;·&nbsp; <b>Automation</b> P &nbsp;·&nbsp; <b>Contracts</b> C &nbsp;·&nbsp; <b>Tech</b> T &nbsp;·&nbsp; <b>Bonds</b> N &nbsp;·&nbsp; <b>Language</b> G',
+  ko: '<b>이동</b> 방향키/WASD &nbsp;·&nbsp; <b>상호작용</b> Space/E &nbsp;·&nbsp; <b>버리기</b> Q &nbsp;·&nbsp; <b>휴식</b> R &nbsp;·&nbsp; <b>상점</b> B &nbsp;·&nbsp; <b>인벤토리</b> 1~8 &nbsp;·&nbsp; <b>퀘스트</b> L &nbsp;·&nbsp; <b>도감</b> K &nbsp;·&nbsp; <b>자동화</b> P &nbsp;·&nbsp; <b>계약</b> C &nbsp;·&nbsp; <b>기술</b> T &nbsp;·&nbsp; <b>관계</b> N &nbsp;·&nbsp; <b>소리</b> M &nbsp;·&nbsp; <b>언어</b> G',
+  en: '<b>Move</b> Arrows/WASD &nbsp;·&nbsp; <b>Interact</b> Space/E &nbsp;·&nbsp; <b>Drop</b> Q &nbsp;·&nbsp; <b>Rest</b> R &nbsp;·&nbsp; <b>Shop</b> B &nbsp;·&nbsp; <b>Inventory</b> 1~8 &nbsp;·&nbsp; <b>Quests</b> L &nbsp;·&nbsp; <b>Compendium</b> K &nbsp;·&nbsp; <b>Automation</b> P &nbsp;·&nbsp; <b>Contracts</b> C &nbsp;·&nbsp; <b>Tech</b> T &nbsp;·&nbsp; <b>Bonds</b> N &nbsp;·&nbsp; <b>Sound</b> M &nbsp;·&nbsp; <b>Language</b> G',
 };
 function updateHintBar(){
   const el = document.getElementById('hintbar');
