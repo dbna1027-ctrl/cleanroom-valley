@@ -263,6 +263,17 @@ const state = {
   npcQuests: [],          // populated from NPC_QUESTS at init
   questLogOpen: false,
   npcQuestsClaimed: 0,
+  // NPC affinity / relationships (per location)
+  affinity: {
+    fab:   { pts:0, lastDay:-1 },
+    office:{ pts:0, lastDay:-1 },
+    smock: { pts:0, lastDay:-1 },
+    break: { pts:0, lastDay:-1 },
+    rnd:   { pts:0, lastDay:-1 },
+    roof:  { pts:0, lastDay:-1 },
+  },
+  relOpen: false,         // relationships board overlay (N)
+  gowning: null,          // gowning ritual transition { active, t, dir, applied }
   npcDialog: null,        // { name, role, color, text } — bottom dialogue box
   // juice / game-feel
   floaters: [],           // rising +Si / PERFECT! texts
@@ -705,9 +716,18 @@ window.addEventListener('keydown', e => {
   // Open the language menu any time
   if (k === 'g'){ openLangMenu(); return; }
 
-  // Title screen — press to begin
+  // Title screen — navigate + confirm
   if (state.titleScreen){
-    if (k === ' ' || k === 'enter' || k === 'e') startGame();
+    if (titleHasSave){
+      if (k === 'arrowup' || k === 'w') titleSel = 0;
+      else if (k === 'arrowdown' || k === 's') titleSel = 1;
+      else if (k === ' ' || k === 'enter' || k === 'e'){
+        if (titleSel === 0) loadGame();
+        else { clearSave(); startGame(); }
+      }
+    } else {
+      if (k === ' ' || k === 'enter' || k === 'e') startGame();
+    }
     return;
   }
 
@@ -722,6 +742,22 @@ window.addEventListener('keydown', e => {
   }
 
   // Automation dashboard (P) — owns input while open; opens above the world
+  // Gowning ritual owns input while it plays
+  if (state.gowning && state.gowning.active){
+    if (k === ' ' || k === 'e' || k === 'enter' || k === 'escape') gowningSkip();
+    return;
+  }
+  // Relationships board (N) — read-only; owns input while open
+  if (state.relOpen){
+    if (k === 'n' || k === 'escape' || k === 'q') state.relOpen = false;
+    return;
+  }
+  if (k === 'n'){
+    if (state.ending || state.questLogOpen || state.compendiumOpen || state.npcDialog ||
+        state.shopOpen || state.officeShopOpen || state.rndMenuOpen || state.miniGame || state.qaGame ||
+        state.dashOpen || state.contracts.open || state.tech.open) return;
+    state.relOpen = true; return;
+  }
   if (state.dashOpen){
     if (k === 'p' || k === 'escape' || k === 'q') state.dashOpen = false;
     else if (k === 'u') autoUnlock();
@@ -867,7 +903,7 @@ function cvsToLogical(e){
 }
 cvs.addEventListener('mousedown', e => {
   const p = cvsToLogical(e);
-  if (state.titleScreen){ startGame(); return; }
+  if (state.titleScreen){ if (titleHasSave && titleSel===0) loadGame(); else startGame(); return; }
   if (state.langMenu){ langMenuClick(p.x, p.y); return; }
   if (!state.qaGame || state.qaGame.result) return;
   qaClick(p.x, p.y);
@@ -1146,6 +1182,7 @@ function rest(){
   } else {
     speak('self', 'Day ' + state.day + ' — 보급 완료!' + extra, 110);
   }
+  saveGame();   // auto-save progress on rest
 }
 
 // ============================================================
@@ -1482,30 +1519,119 @@ function claimNpcQuest(q){
   spawnBurst(240, 100, [C.badge, '#fff2bc', C.grnHi, '#ffffff'], 18, { spd: 1.9, up: 0.6 });
   addShake(2.4);
   unlock('NPCQ_'+q.id+'_'+q.tier, '🤝 ' + q.npc + ': ' + tier.title, 0);
+  affAdd(q.loc, 6);   // finishing their request deepens the bond
   // advance to next tier or finish
   if (q.tier < q.tiers.length-1){ q.tier++; q.status='active'; }
   else q.status='done';
   toast('🤝 ' + q.npc + '에게 보고 완료!<br>+' + tier.reward + ' ' + (q.kind==='si'?'Si':'₩'), 2200);
 }
 // talk to the NPC of the current scene: show quest progress / claim reward
-function openNpcDialog(name, role, color, text){
-  state.npcDialog = { name, role, color, text };
+function openNpcDialog(name, role, color, text, stage){
+  state.npcDialog = { name, role, color, text, stage };
 }
 function talkNpc(){
   const q = sceneNpcQuest();
   if (!q){ openNpcDialog('동료', '', '#7a7a8a', '오늘도 좋은 수율 내봐요!'); return; }
-  const tier = q.tiers[q.tier];
   const col = NPC_COLORS[q.id] || '#666';
+  affDailyTalk(q.loc);                         // talking on a new day deepens the bond
   if (q.status === 'ready'){
-    claimNpcQuest(q);
-    openNpcDialog(q.npc, q.role, col, '고마워요! 「' + tier.title + '」 달성 🎉\n보상 +' + tier.reward + ' ' + (q.kind==='si'?'Si':'₩') + ' 전달했어요.');
-  } else if (q.status === 'active'){
-    openNpcDialog(q.npc, q.role, col, '의뢰: 「' + tier.title + '」\n' + tier.desc + '  (' + q.progress + '/' + tier.target + ')\n보상 +' + tier.reward + ' ' + (q.kind==='si'?'Si':'₩'));
+    const tier = q.tiers[q.tier];
+    claimNpcQuest(q);                          // reward + affinity bonus
+    openNpcDialog(q.npc, q.role, col, '고마워요! 「' + tier.title + '」 달성 🎉\n보상 +' + tier.reward + ' ' + (q.kind==='si'?'Si':'₩') + ' 전달했어요.', affStage(q.loc));
   } else {
-    openNpcDialog(q.npc, q.role, col, '의뢰는 다 끝났어요. 늘 고마워요 😊');
+    openNpcDialog(q.npc, q.role, col, affLine(q.loc) || '오늘도 좋은 수율을!', affStage(q.loc));
   }
 }
 const NPC_COLORS = { fab:'#3a6ea5', office:'#b0584e', smock:'#4a8a5a', break:'#b0822e', rnd:'#5a4a9a', roof:'#c05a8a' };
+
+// ============================================================
+//  NPC AFFINITY (호감도) — six quiet character arcs. Talking on a new
+//  day and finishing an NPC's quests deepen the bond; each stage
+//  unlocks a heartfelt beat in their dialogue. Light & cozy, never
+//  blocking. Six answers to "how do you build machines and stay human."
+// ============================================================
+const AFF_THRESH = [5, 12, 22, 36];     // points → stage 1..4 (stage 0 below 5)
+const AFF_STAGE_NAME = [['낯선 사이','Acquaintance'],['동료','Colleague'],['친근','Friendly'],['신뢰','Trusted'],['마음','Close']];
+const NPC_BY_LOC = {}; for (const q of NPC_QUESTS) NPC_BY_LOC[q.loc] = q;
+// stage 0 = first-impression greeting; arcs[0..3] = beats for stages 1..4
+const NPC_ARCS = {
+  fab: { // 재현 — craft itself; a burned-out perfectionist who rediscovers meaning in teaching
+    g: ['왔어요? 라인은 제가 봐요.', 'You\u2019re here? I\u2019ve got the line.'],
+    arc: [
+      ['PERFECT 아니면 의미 없어요.\n\u2026농담이에요. 9할은.', 'If it\u2019s not PERFECT, it\u2019s nothing.\n...Kidding. Mostly.'],
+      ['솔직히 요즘 좀 지쳤어요.\n같은 수율을 20년 보면, 숫자가 숫자로만 보여요.', 'Honestly, I\u2019m a bit worn out.\nTwenty years of the same yields \u2014 numbers stop meaning anything.'],
+      ['신입 하나 가르치는데,\n잊었던 게 떠오르더라고요. 첫 PERFECT 떴을 때의 그 기분.', 'Teaching a new hire,\nI remembered something I\u2019d lost \u2014 how that first PERFECT felt.'],
+      ['이제 알아요. 완벽한 칩보다,\n완벽을 누군가에게 물려주는 게 더 오래 남아요.\n\u2026당신 덕에 다시 배웠어요.', 'I get it now. Longer than any perfect chip\nis passing that craft to someone.\n...You taught me that again.'],
+    ],
+  },
+  office: { // 수빈 — the deferred dream
+    g: ['어서 오세요. 결재 올릴 거 있으면 두고 가세요.', 'Welcome. Leave anything that needs signing.'],
+    arc: [
+      ['서류는 제가 다 막을게요.\n사장님은 큰 그림만 보세요.', 'I\u2019ll handle the paperwork.\nYou just watch the big picture.'],
+      ['밤에\u2026 글을 좀 써요.\n아무한테도 안 보여줬지만. 언젠가, 시간 나면.', 'At night\u2026 I write a little.\nNever shown anyone. Someday, when there\u2019s time.'],
+      ['회사가 자리를 잡으니까,\n처음으로 그 \u2018언젠가\u2019가 진짜 올 수도 있겠다 싶어요.', 'Now that we\u2019re steady,\nfor the first time that \u2018someday\u2019 feels real.'],
+      ['다음 달에 휴가 냈어요. 기차로 끝까지 가보려고요.\n글의 첫 문장은 거기서 쓸 거예요.\n여길 이렇게 만들어줘서, 고마워요.', 'I took leave next month \u2014 riding the train to the end of the line.\nI\u2019ll write the first sentence there.\nThank you, for making this place that.'],
+    ],
+  },
+  smock: { // 광수 — ritual & memory, the torch
+    g: ['방진복부터. 규칙은 규칙이에요.', 'Smock first. Rules are rules.'],
+    arc: [
+      ['먼지 한 톨이 라인을 멈춰요.\n방진복은 대충 입는 게 아니에요. 천천히, 경건하게.', 'One speck stops the line.\nYou don\u2019t gown up carelessly. Slowly. Reverently.'],
+      ['이 락커, 30년을 썼어요.\n사장님 할아버님이 직접 짜주신 거예요.', 'I\u2019ve used this locker 30 years.\nYour grandfather built it with his own hands.'],
+      ['회사가 크는 건 좋은데\u2026 가끔 무서워요.\n이런 작은 수칙들을, 다들 잊을까 봐.', 'Growth is good, but\u2026 sometimes it scares me \u2014\nthat everyone will forget the small rules.'],
+      ['정년이 멀지 않았어요. 근데 이제 걱정 안 해요.\n당신이 이 수칙의 무게를 아는 걸 봤으니까.\n횃불은\u2026 잘 넘어갈 거예요.', 'Retirement\u2019s not far. But I don\u2019t worry now \u2014\nI\u2019ve seen you understand what these rules weigh.\nThe torch\u2026 will pass just fine.'],
+    ],
+  },
+  break: { // 은영 — caring for others; who cares for the caregiver
+    g: ['커피 한 잔 하고 가요.', 'Grab a coffee before you go.'],
+    arc: [
+      ['오늘 커피 어때요?\n피곤해 보여서 좀 진하게 내렸어요.', 'How\u2019s the coffee today?\nYou looked tired, so I pulled it strong.'],
+      ['다들 여기 와서 한숨씩 쉬고 가요.\n듣다 보면\u2026 제 얘긴 잘 안 하게 되더라고요.', 'Everyone comes here to sigh a while.\nListening so much, I\u2026 rarely talk about myself.'],
+      ['어제 정우 씨가 \u201C은영 씨는 괜찮아요?\u201D 하는데,\n좀 울 뻔했어요. 아무도 안 물어봤거든요.', 'Yesterday Jungwoo asked, \u201CAnd are you okay?\u201D\nI nearly cried. No one had asked.'],
+      ['오늘은 제 커피를 제가 내려서, 창가에 앉아 마셨어요.\n가끔은 저도 돌봄을 받아도 되는 거더라고요.\n들어줘서 고마워요.', 'Today I made my own coffee and sat by the window.\nSometimes I\u2019m allowed to be cared for, too.\nThank you for listening.'],
+    ],
+  },
+  rnd: { // 정우 — the dream of "why", keeping wonder
+    g: ['오, 마침 잘 왔어요. 이것 좀 보세요.', 'Oh, perfect timing \u2014 come look at this.'],
+    arc: [
+      ['다음 노드만 넘으면, 세상이 또 한 번 바뀌어요.\n상상돼요?', 'One more node and the world shifts again.\nCan you picture it?'],
+      ['예산이 또 깎였어요.\n꿈만으로는 안 굴러간다는 거\u2026 알죠. 아는데.', 'They cut the budget again.\nDreams alone don\u2019t run a fab\u2026 I know. I do.'],
+      ['어젯밤 데이터가 처음으로 맞아떨어졌어요.\n새벽 네 시였는데, 혼자 소리 질렀어요.', 'Last night the data finally lined up.\nFour a.m., and I shouted, alone.'],
+      ['당신을 보며 배웠어요.\n거대한 \u2018왜\u2019도 결국 오늘의 작은 한 장에서 시작한다는 걸.\n경이는\u2026 잃지 않아도 되는 거였어요.', 'Watching you, I learned \u2014\neven a vast \u2018why\u2019 starts from one small wafer today.\nThe wonder\u2026 I didn\u2019t have to lose it.'],
+    ],
+  },
+  roof: { // 미경 — rest & nature; the game's thesis
+    g: ['천천히 둘러봐요. 시간은 많아요.', 'Look around slowly. There\u2019s time.'],
+    arc: [
+      ['기계만 가득한 건물에서, 여기만 살아 있어요.\n식물은 안 기다려주지만, 재촉하지도 않아요.', 'In a building full of machines, only here is alive.\nPlants won\u2019t wait for you \u2014 but they won\u2019t rush you either.'],
+      ['사람들은 위로, 위로만 올라가요.\n근데 올라오면 결국 보는 건 노을이에요.', 'People climb up, and up.\nBut up here, what you end up watching is the sunset.'],
+      ['이 토마토, 작년 그 자리에서 또 났어요.\n아무도 안 심었는데. 생명은\u2026 끈질겨요. 당신처럼.', 'This tomato came back in the same spot as last year.\nNo one planted it. Life is\u2026 stubborn. Like you.'],
+      ['당신이 지은 걸 보고 싶으면, 숫자 말고 여기서 봐요.\n불 켜진 창들, 돌아온 사람들.\n느린 건 의미 없는 게 아니에요. 노을이면, 충분해요.', 'To see what you built, look from here \u2014 not at numbers.\nThe lit windows, the people who came back.\nSlow isn\u2019t meaningless. A sunset is enough.'],
+    ],
+  },
+};
+function affStage(id){ const a = state.affinity[id]; if (!a) return 0; let s=0; for (const t of AFF_THRESH) if (a.pts >= t) s++; return s; }
+function affLine(id){
+  const arc = NPC_ARCS[id]; if (!arc) return null;
+  const s = affStage(id);
+  const pair = s === 0 ? arc.g : arc.arc[s-1];
+  return state.lang === 'en' ? pair[1] : pair[0];
+}
+function affAdd(id, n){
+  const a = state.affinity[id]; if (!a) return;
+  const before = affStage(id);
+  a.pts += n;
+  const after = affStage(id);
+  if (after > before){
+    const nm = NPC_BY_LOC[id] ? NPC_BY_LOC[id].npc : '';
+    toast('💞 ' + L2(nm + '와(과) 더 가까워졌어요', 'Closer with ' + nm) + ' (' + L2(AFF_STAGE_NAME[after][0], AFF_STAGE_NAME[after][1]) + ')', 2200);
+    if (after >= 4) unlock('AFF_' + id, '💞 ' + nm + ': ' + L2('마음', 'Close'), 0);
+  }
+}
+function affDailyTalk(id){
+  const a = state.affinity[id]; if (!a) return;
+  if (a.lastDay !== state.day){ a.lastDay = state.day; affAdd(id, 2); }
+}
 function drawNpcMarker(cx, topY, q){
   // floating quest marker above an NPC's head
   if (q.status === 'done'){ R(cx-1,topY+2,2,2,'#e0a0b0'); return; }
@@ -1875,8 +2001,58 @@ function drawStory(){
   txt(KO ? '▸ Space   ·   Esc 건너뛰기' : '▸ Space   ·   Esc skip', mx+mw-24, my+mh-12, 5, '#9a8666', 'end');
 }
 
+// ============================================================
+//  SAVE SYSTEM — localStorage, auto-save on rest(), load on continue
+// ============================================================
+const SAVE_KEY = 'cleanroomValley_save';
+function deepMerge(target, source){
+  for (const key in source){
+    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])
+        && target[key] && typeof target[key] === 'object' && !Array.isArray(target[key])){
+      deepMerge(target[key], source[key]);
+    } else {
+      target[key] = source[key];
+    }
+  }
+}
+function saveGame(){
+  try{ localStorage.setItem(SAVE_KEY, JSON.stringify(state)); }catch(e){ console.warn('Save failed:', e); }
+}
+function clearSave(){
+  try{ localStorage.removeItem(SAVE_KEY); }catch(e){}
+}
+function loadGame(){
+  try{
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    const saved = JSON.parse(raw);
+    deepMerge(state, saved);
+    // reset ephemeral / overlay / animation state — player resumes cleanly in the fab
+    state.titleScreen = false;
+    state.pmove = false; state.pwalk = 0; state.pdir = 'down';
+    state.fadeDir = 0; state.fade = 0; state.shake = 0;
+    state.speech = null; state.npcDialog = null;
+    state.shopOpen = false; state.officeShopOpen = false; state.rndMenuOpen = false;
+    state.miniGame = null; state.qaGame = null; state.officeWork = null;
+    state.dashOpen = false; state.contracts.open = false; state.tech.open = false; state.relOpen = false;
+    state.gowning = null;
+    state.questLogOpen = false; state.compendiumOpen = false; state.langMenu = false;
+    state.story.active = null; state.story.page = 0; state.story.queue = [];
+    state.ending = null;   // endingShown persists → won't retrigger
+    state.carry = null; state.carryQ = 0; state.carryQA = null;
+    state.lithoBusy = false; state.etchBusy = false;
+    state.combo = 0; state.comboTimer = 0;
+    state.scene = 'fab'; state.px = 232; state.py = 222;
+    const el = document.getElementById('hintbar'); if (el) el.style.display = '';
+    updateHintBar();
+    return true;
+  }catch(e){ console.warn('Load failed:', e); return false; }
+}
+
 // ---- title / start screen (Mirinae, starlight theme) ----
-let titleT = 0;
+let titleT = 0, titleSel = 0;
+let titleHasSave = false;
+try{ titleHasSave = !!localStorage.getItem(SAVE_KEY); }catch(e){}
 const TITLE_STARS = (() => {
   const a = []; let s = 1337;
   const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
@@ -1935,8 +2111,19 @@ function drawTitle(){
   txt(KO ? '미리내 반도체' : 'Mirinae Semiconductor', W/2, 150, 7, '#bcc8ec', 'center');
   txt(KO ? '별빛을 만드는 작은 팹' : 'a small fab that makes starlight', W/2, 162, 5, '#8a96c0', 'center');
   // start prompt (pulse) + language hint
-  const pa = 0.5 + 0.5*Math.sin(titleT*0.10);
-  txt(KO ? 'Space — 시작' : 'Press Space to Start', W/2, 202, 7, 'rgba(244,236,212,'+pa.toFixed(2)+')', 'center');
+  if (titleHasSave){
+    const items = [ KO ? '▶  이어하기' : '▶  Continue', KO ? '✦  새 게임' : '✦  New Game' ];
+    for (let i=0;i<2;i++){
+      const sel = titleSel === i;
+      const y = 190 + i*18;
+      const a = sel ? (0.5 + 0.5*Math.sin(titleT*0.12)).toFixed(2) : '0.35';
+      txt(items[i], W/2, y, 7, sel ? 'rgba(244,236,212,'+a+')' : 'rgba(180,180,200,0.45)', 'center');
+    }
+    txt(KO ? '↑↓ 선택   Space 확인' : '↑↓ select   Space confirm', W/2, 228, 5, '#6a76a0', 'center');
+  } else {
+    const pa = 0.5 + 0.5*Math.sin(titleT*0.10);
+    txt(KO ? 'Space — 시작' : 'Press Space to Start', W/2, 202, 7, 'rgba(244,236,212,'+pa.toFixed(2)+')', 'center');
+  }
   txt('G — KO / EN', W/2, H-9, 5, '#6a76a0', 'center');
 }
 
@@ -1972,11 +2159,34 @@ function drawDialogFace(cx, cy, color){
   P(cx-3,cy-6,'#2a1c10'); P(cx+1,cy-6,'#2a1c10');  // eyes
   R(cx-2,cy-3,4,1,'#c89070');           // smile
 }
+function drawRelationships(){
+  if (!state.relOpen) return;
+  ctx.fillStyle='rgba(8,8,16,0.80)'; ctx.fillRect(0,0,W,H);
+  const bw=304, bh=212, bx=Math.round((W-bw)/2), by=Math.round((H-bh)/2);
+  R(bx-3,by-3,bw+6,bh+6,'#2a2030');
+  R(bx,by,bw,bh,'#f3ecdd');
+  R(bx,by,bw,3,'#fff8e8'); R(bx,by+bh-3,bw,3,'#c8bca0');
+  txt(L2('관계','Relationships'), bx+bw/2, by+15, 9, '#3a2a1a', 'center');
+  txt(L2('함께 일하며 깊어지는 사이','Bonds that deepen as you work together'), bx+bw/2, by+28, 5, '#9a7850', 'center');
+  const order=['fab','office','smock','break','rnd','roof'];
+  let y=by+42;
+  for (const id of order){
+    const q=NPC_BY_LOC[id], s=affStage(id), col=NPC_COLORS[id]||'#888';
+    drawDialogFace(bx+24, y+12, col);
+    txt(q.npc, bx+42, y+7, 6, '#2a1c10', 'start');
+    txt(q.role, bx+42, y+17, 5, '#8a7860', 'start');
+    const n=4, hx=bx+bw-14-n*10;
+    for (let i=0;i<n;i++){ const on=i<s; R(hx+i*10, y+3, 7,7, on?'#e07a9a':'#dccfc0'); R(hx+i*10, y+3, 7,1, on?'#f2a6bc':'#e8dcc8'); }
+    txt(L2(AFF_STAGE_NAME[s][0],AFF_STAGE_NAME[s][1]), bx+bw-14, y+18, 5, '#9a7850', 'end');
+    y+=26;
+  }
+  if ((state.t>>4)&1) txt('N / Esc', bx+bw-12, by+bh-9, 5, '#9a7850', 'end');
+}
 function drawNpcDialog(){
   if (!state.npcDialog) return;
   const d = state.npcDialog;
   ctx.fillStyle='rgba(8,10,18,0.35)'; ctx.fillRect(0,0,W,H);
-  const bx=22, bw=W-44, by=192, bh=66;
+  const bx=22, bw=W-44, by=178, bh=86;
   R(bx-3,by-3,bw+6,bh+6, d.color || '#3a2818');
   R(bx,by,bw,bh,'#f6eedc');
   R(bx,by,bw,3,'#fff8e8'); R(bx,by+bh-3,bw,3,'#c8bca0');
@@ -1986,12 +2196,17 @@ function drawNpcDialog(){
   drawDialogFace(bx+29, by+10+(bh-20)/2, d.color || '#888');
   // name plate
   const np = d.name + (d.role ? (' · ' + d.role) : '');
-  R(bx+58, by+9, Math.min(bw-70, np.length*7+12), 13, d.color || '#3a2818');
+  R(bx+58, by+9, Math.min(bw-130, np.length*7+12), 13, d.color || '#3a2818');
   txt(np, bx+64, by+19, 6, '#fff8e8', 'start');
+  // affinity hearts (top-right)
+  if (typeof d.stage === 'number'){
+    const n=4, hx=bx+bw-12-n*9;
+    for (let i=0;i<n;i++){ const on=i<d.stage; R(hx+i*9, by+9, 6, 6, on?'#e07a9a':'#d8ccb8'); R(hx+i*9, by+9, 6, 1, on?'#f2a6bc':'#e8dcc8'); }
+  }
   // message
-  drawWrapped(d.text, bx+60, by+36, bw-78, 6, '#2a1c10', 11);
+  drawWrapped(d.text, bx+60, by+34, bw-78, 6, '#2a1c10', 11);
   // continue hint
-  if ((state.t>>4)&1) txt('▶ Space', bx+bw-12, by+bh-9, 5, '#9a7850', 'end');
+  if ((state.t>>4)&1) txt('▶ Space', bx+bw-12, by+bh-8, 5, '#9a7850', 'end');
 }
 
 // ============================================================
@@ -2103,6 +2318,7 @@ function triggerEnding(reason){
   state.officeWork = null;
   state.miniGame = null;
   state.ending = buildReport(reason);
+  saveGame();   // save before the ending card shows
 }
 function closeEnding(){ state.ending = null; }   // resume endless play (won't retrigger)
 
@@ -2665,7 +2881,7 @@ function storyCanShow(){
   return !state.titleScreen && state.fadeDir === 0 && !state.langMenu && !state.ending && !state.npcDialog &&
          !state.questLogOpen && !state.compendiumOpen && !state.shopOpen && !state.officeShopOpen &&
          !state.rndMenuOpen && !state.miniGame && !state.qaGame &&
-         !state.dashOpen && !state.contracts.open && !state.tech.open;
+         !state.dashOpen && !state.contracts.open && !state.tech.open && !state.relOpen;
 }
 function tickStory(){
   for (const b of STORY) if (storyReady(b)) state.story.queue.push(b.id);   // detect & enqueue (authored order)
@@ -2694,6 +2910,7 @@ function skipStory(){
 function update(){
   if (state.titleScreen) return;   // world is frozen behind the title screen
   state.t++;
+  if (state.gowning && state.gowning.active){ tickGowning(); state.pmove=false; state.pwalk=0; state.prompt=null; return; }
   if (state.langMenu){ return; }   // language menu pauses everything
   tickFade();
   if (state.ending) return;   // freeze the world behind the ending screen
@@ -2703,6 +2920,7 @@ function update(){
   if (state.dashOpen){ state.pmove=false; state.pwalk=0; return; }      // dashboard pauses the world
   if (state.contracts.open){ state.pmove=false; state.pwalk=0; return; } // contracts board pauses the world
   if (state.tech.open){ state.pmove=false; state.pwalk=0; return; }      // tech tree pauses the world
+  if (state.relOpen){ state.pmove=false; state.pwalk=0; return; }        // relationships board pauses the world
   if (state.story.active){ state.pmove=false; state.pwalk=0; return; }   // story card pauses the world
   tickClock();
   tickAchv();
@@ -5254,8 +5472,88 @@ function smockInteract(){
 }
 
 function toggleSmock(){
+  if (state.gowning && state.gowning.active) return;
+  state.gowning = { active:true, t:0, dir: state.smockOn ? 'off' : 'on', applied:false };
+}
+// ---- gowning ritual transition (the air-shower entry ceremony) ----
+const GOWN_DUR = { on: 110, off: 56 };
+function gownApplyPoint(dir){ return dir === 'on' ? 0.84 : 0.5; }
+function applyGown(){
+  const g = state.gowning; if (!g || g.applied) return;
+  g.applied = true;
   state.smockOn = !state.smockOn;
-  speak('self', state.smockOn ? '🥼 smock 착용 완료' : '👔 평상복으로', 120);
+  speak('self', state.smockOn ? '🥼 smock 착용 완료' : '👔 평상복으로', 110);
+}
+function tickGowning(){
+  const g = state.gowning; if (!g) return;
+  g.t++;
+  const DUR = GOWN_DUR[g.dir];
+  if (!g.applied && g.t / DUR >= gownApplyPoint(g.dir)) applyGown();
+  if (g.t >= DUR){ if (!g.applied) applyGown(); state.gowning = null; }
+}
+function gowningSkip(){
+  if (!state.gowning) return;
+  if (!state.gowning.applied) applyGown();
+  state.gowning = null;
+}
+function drawGownFigure(fx, fy, lvl){
+  const skin='#eccba6', hair='#3a2a1c', shirt='#3a6ea5', pants='#2f3a4a', white='#f3f8fb', wsh='#dce8f0', dark='#1a2230';
+  const suit = lvl>=1 ? white : shirt, leg = lvl>=1 ? white : pants;
+  R(fx-5, fy-13, 4, 13, leg); R(fx+1, fy-13, 4, 13, leg);                 // legs
+  R(fx-6, fy-2, 5, 3, lvl>=1?wsh:dark); R(fx+1, fy-2, 5, 3, lvl>=1?wsh:dark); // boots
+  R(fx-7, fy-31, 14, 19, suit); R(fx-7,fy-31,14,2,'#ffffff');             // torso/coverall
+  ctx.globalAlpha=0.16; R(fx-7,fy-31,14,2,'#fff'); ctx.globalAlpha=1;
+  R(fx-10, fy-30, 3, 15, suit); R(fx+7, fy-30, 3, 15, suit);              // arms
+  const gl = lvl>=4 ? white : skin;
+  R(fx-10, fy-16, 3, 3, gl); R(fx+7, fy-16, 3, 3, gl);                    // gloves/hands
+  R(fx-5, fy-43, 10, 12, skin);                                          // head
+  if (lvl>=2){ R(fx-6, fy-44, 12, 6, white); R(fx-6,fy-44,12,1,'#ffffff'); }  // hood
+  else R(fx-5, fy-44, 10, 4, hair);                                      // hair
+  if (lvl>=3) R(fx-5, fy-36, 10, 5, wsh);                                // mask
+  P(fx-3, fy-39, dark); P(fx+2, fy-39, dark);                            // eyes
+  if (lvl<3) R(fx-2, fy-34, 4, 1, '#c89070');                            // mouth
+}
+function drawGowning(){
+  const g = state.gowning; if (!g || !g.active) return;
+  const dir=g.dir, DUR=GOWN_DUR[dir], p=Math.min(1, g.t/DUR);
+  ctx.fillStyle='rgba(6,10,16,0.82)'; ctx.fillRect(0,0,W,H);
+  const bw=210, bh=188, bx=Math.round((W-bw)/2), by=40, cx=bx+bw/2;
+  R(bx-3,by-3,bw+6,bh+6,'#2a3340');
+  const grd=ctx.createLinearGradient(0,by,0,by+bh); grd.addColorStop(0,'#e2ecf2'); grd.addColorStop(1,'#c4d4e0');
+  ctx.fillStyle=grd; ctx.fillRect(bx,by,bw,bh);
+  R(bx,by,bw,3,'#f4fafe'); R(bx,by+bh-3,bw,3,'#9fb2bf');
+  R(bx, by+bh-22, bw, 19, '#b0c1cc');                                    // floor band
+  txt(dir==='on'?L2('입실 — 방진 가운','Gowning up'):L2('탈의','De-gowning'), cx, by+15, 7, '#2a3a46','center');
+  // gown level by progress
+  let lvl = dir==='on' ? (p>=0.10)+(p>=0.22)+(p>=0.34)+(p>=0.46)
+                       : 4 - ((p>=0.12)+(p>=0.24)+(p>=0.36)+(p>=0.48));
+  lvl = Math.max(0, Math.min(4, lvl));
+  const airOn = dir==='on' && p>=0.55 && p<0.86;
+  if (airOn){
+    for (let i=0;i<11;i++){ const sxp=bx+16+i*((bw-32)/10), off=(g.t*5+i*9)%46;
+      ctx.globalAlpha=0.30; R(Math.round(sxp), by+24+off, 1, 9, '#ffffff'); ctx.globalAlpha=1; }
+    txt(L2('에어 샤워','Air shower'), cx, by+30, 5, '#5a7080','center');
+  }
+  const fy = by+bh-24;
+  drawGownFigure(cx, fy, lvl);
+  if (airOn){
+    const k=(p-0.55)/0.31;
+    for (let i=0;i<7;i++){ const a=i*0.9, r=6+k*26;
+      const dxp=cx+Math.cos(a+g.t*0.05)*r, dyp=fy-22+Math.sin(a)*r*0.5+k*10;
+      ctx.globalAlpha=(1-k)*0.8; R(Math.round(dxp), Math.round(dyp), 1,1,'#9a8a6a'); ctx.globalAlpha=1; }
+  }
+  if (dir==='on'){
+    const steps=[L2('방진복','Coverall'), L2('후드','Hood'), L2('마스크','Mask'), L2('장갑','Gloves')];
+    for (let i=0;i<4;i++){ const yy=by+44+i*16, done=lvl>i;
+      R(bx+14, yy, 8, 8, done?'#3a8a5a':'#cdd8e0');
+      if (done){ R(bx+16, yy+4, 2,2,'#fff'); R(bx+17, yy+3, 2,2,'#fff'); }
+      txt(steps[i], bx+28, yy+7, 5, done?'#2a3a46':'#8a9aa6','start'); }
+  }
+  if (dir==='on' && p>=0.86){
+    const fa=(1-(p-0.86)/0.14)*0.55; ctx.fillStyle='rgba(255,255,255,'+fa.toFixed(2)+')'; ctx.fillRect(0,0,W,H);
+    txt(L2('입실 완료 · CLEAN','CLEAN · entered'), cx, by+bh-30, 8, '#1f6f43','center');
+  }
+  if ((state.t>>4)&1) txt(L2('Space 건너뛰기','Space to skip'), cx, by+bh+12, 5, '#aebcc8','center');
 }
 
 function updateSmock(){
@@ -6942,6 +7240,7 @@ function frame(){
   drawDashboard();
   drawContracts();
   drawTech();
+  drawRelationships();
   // NPC dialogue box
   drawNpcDialog();
 
@@ -6950,6 +7249,9 @@ function frame(){
 
   // ending report card (above everything)
   drawEnding();
+
+  // gowning ritual (over the world, under title / language menu)
+  drawGowning();
 
   // title / start screen (over everything, under the language menu)
   if (state.titleScreen) drawTitle();
@@ -6963,8 +7265,8 @@ function frame(){
 // Welcome
 // ---- language (i18n) ----
 const HINT_HTML = {
-  ko: '<b>이동</b> 방향키/WASD &nbsp;·&nbsp; <b>상호작용</b> Space/E &nbsp;·&nbsp; <b>버리기</b> Q &nbsp;·&nbsp; <b>휴식</b> R &nbsp;·&nbsp; <b>상점</b> B &nbsp;·&nbsp; <b>인벤토리</b> 1~8 &nbsp;·&nbsp; <b>퀘스트</b> L &nbsp;·&nbsp; <b>도감</b> K &nbsp;·&nbsp; <b>자동화</b> P &nbsp;·&nbsp; <b>계약</b> C &nbsp;·&nbsp; <b>기술</b> T &nbsp;·&nbsp; <b>언어</b> G',
-  en: '<b>Move</b> Arrows/WASD &nbsp;·&nbsp; <b>Interact</b> Space/E &nbsp;·&nbsp; <b>Drop</b> Q &nbsp;·&nbsp; <b>Rest</b> R &nbsp;·&nbsp; <b>Shop</b> B &nbsp;·&nbsp; <b>Inventory</b> 1~8 &nbsp;·&nbsp; <b>Quests</b> L &nbsp;·&nbsp; <b>Compendium</b> K &nbsp;·&nbsp; <b>Automation</b> P &nbsp;·&nbsp; <b>Contracts</b> C &nbsp;·&nbsp; <b>Tech</b> T &nbsp;·&nbsp; <b>Language</b> G',
+  ko: '<b>이동</b> 방향키/WASD &nbsp;·&nbsp; <b>상호작용</b> Space/E &nbsp;·&nbsp; <b>버리기</b> Q &nbsp;·&nbsp; <b>휴식</b> R &nbsp;·&nbsp; <b>상점</b> B &nbsp;·&nbsp; <b>인벤토리</b> 1~8 &nbsp;·&nbsp; <b>퀘스트</b> L &nbsp;·&nbsp; <b>도감</b> K &nbsp;·&nbsp; <b>자동화</b> P &nbsp;·&nbsp; <b>계약</b> C &nbsp;·&nbsp; <b>기술</b> T &nbsp;·&nbsp; <b>관계</b> N &nbsp;·&nbsp; <b>언어</b> G',
+  en: '<b>Move</b> Arrows/WASD &nbsp;·&nbsp; <b>Interact</b> Space/E &nbsp;·&nbsp; <b>Drop</b> Q &nbsp;·&nbsp; <b>Rest</b> R &nbsp;·&nbsp; <b>Shop</b> B &nbsp;·&nbsp; <b>Inventory</b> 1~8 &nbsp;·&nbsp; <b>Quests</b> L &nbsp;·&nbsp; <b>Compendium</b> K &nbsp;·&nbsp; <b>Automation</b> P &nbsp;·&nbsp; <b>Contracts</b> C &nbsp;·&nbsp; <b>Tech</b> T &nbsp;·&nbsp; <b>Bonds</b> N &nbsp;·&nbsp; <b>Language</b> G',
 };
 function updateHintBar(){
   const el = document.getElementById('hintbar');
