@@ -2185,6 +2185,8 @@ function loadGame(){
     state.lithoBusy = false; state.etchBusy = false;
     state.combo = 0; state.comboTimer = 0;
     state.scene = 'fab'; state.px = 232; state.py = 222;
+    state.smockOn = true;   // fab requires the cleanroom suit — always resume gowned
+    state.camX = 0;         // reset camera so the view re-centers on the player
     const el = document.getElementById('hintbar'); if (el) el.style.display = '';
     Sound.on = (state.soundOn !== false);
     if (Sound.ready){ if (Sound.on && state.musicOn !== false) Music.start(); else Music.stop(); }
@@ -3694,24 +3696,40 @@ function drawPlayer(){
 function drawSmockBody(dir, stride){
   // HEAD
   if (dir === 'down' || dir === 'right' || dir === 'left'){
-    R(2,0,10,2,C.outline);
+    // rounded hood (softer top corners read as cuter)
+    R(3,0,8,1,C.outline);
+    R(2,1,10,1,C.outline);
     R(1,2,12,8,C.suit);
     R(1,2,12,1,C.suitHi);
+    R(3,2,7,1,'#ffffff');                 // glossy hood sheen
     R(0,3,1,6,C.outline);
     R(13,3,1,6,C.outline);
     if (dir === 'down'){
-      R(3,5,8,3,C.visor);
-      R(3,5,8,1,C.visorMid);
-      P(5,6,C.black); P(8,6,C.black);
-    } else {
-      const flip = dir === 'left';
-      if (!flip){ R(5,5,7,3,C.visor); R(5,5,7,1,C.visorMid); P(8,6,C.black); }
-      else      { R(2,5,7,3,C.visor); R(2,5,7,1,C.visorMid); P(5,6,C.black); }
+      // big rounded visor
+      R(2,5,10,4,C.visor);
+      R(2,5,10,1,C.visorMid);
+      // big cute eyes with a sparkle highlight
+      R(4,6,2,2,C.black); P(4,6,'#bfe9ff');
+      R(8,6,2,2,C.black); P(8,6,'#bfe9ff');
+      // soft blush + tiny smile through the visor
+      P(3,8,'#ff9aa6'); P(10,8,'#ff9aa6');
+      P(6,8,C.visorMid); P(7,8,C.visorMid);
+    } else if (dir === 'right'){
+      R(3,5,9,4,C.visor); R(3,5,9,1,C.visorMid);
+      R(8,6,2,2,C.black); P(8,6,'#bfe9ff');
+      P(10,8,'#ff9aa6');
+    } else { // left
+      R(2,5,9,4,C.visor); R(2,5,9,1,C.visorMid);
+      R(4,6,2,2,C.black); P(4,6,'#bfe9ff');
+      P(3,8,'#ff9aa6');
     }
   } else {
-    R(2,0,10,2,C.outline);
+    // back of hood (rounded)
+    R(3,0,8,1,C.outline);
+    R(2,1,10,1,C.outline);
     R(1,2,12,8,C.suit);
     R(1,2,12,1,C.suitHi);
+    R(3,2,7,1,'#ffffff');
     R(2,8,10,2,C.suitSh);
     R(0,3,1,6,C.outline);
     R(13,3,1,6,C.outline);
@@ -3773,28 +3791,45 @@ function drawCasualBody(dir, stride){
 
   // HEAD
   if (dir === 'up'){
-    // back of head — all hair
-    R(2,0,10,2,O);
+    // back of head — all hair, rounded with a little cowlick tuft
+    R(3,0,8,1,O);
+    R(2,1,10,1,O);
     R(1,2,12,8,HR);
     R(1,2,12,1,HRH);
+    P(7,0,HRH);                 // cute hair tuft (ahoge)
     R(0,3,1,6,O);
     R(13,3,1,6,O);
   } else {
-    // hair cap
-    R(2,0,10,2,O);
+    // rounded hair cap + tuft
+    R(3,0,8,1,O);
+    R(2,1,10,1,O);
     R(1,2,12,3,HR);
     R(1,2,12,1,HRH);
-    // face
+    P(7,0,HRH);                 // ahoge
+    P(4,2,HRH); P(9,2,HRH);     // soft fringe highlights
+    // face (a touch rounder)
     R(2,5,10,5,SK);
     R(2,5,10,1,'#f2cca0');
+    P(1,6,SKS); P(12,6,SKS);    // rounded cheek corners
     R(0,4,1,5,O);
     R(13,4,1,5,O);
     // ears
     P(1,7,SKS); P(12,7,SKS);
-    // eyes per facing
-    if (dir === 'down'){ P(5,7,O); P(8,7,O); P(6,9,SKS); }
-    else if (dir === 'right'){ P(8,7,O); P(10,8,SKS); }
-    else { P(5,7,O); P(3,8,SKS); }
+    // BIG cute eyes (2px) + sparkle, blush, tiny smile per facing
+    if (dir === 'down'){
+      R(4,7,2,2,O); P(4,7,'#ffffff');     // left eye + sparkle
+      R(8,7,2,2,O); P(8,7,'#ffffff');     // right eye + sparkle
+      P(3,9,'#f3a0a8'); P(10,9,'#f3a0a8'); // blush
+      P(6,9,SKS); P(7,9,SKS);              // little smile
+    } else if (dir === 'right'){
+      R(8,7,2,2,O); P(8,7,'#ffffff');
+      P(10,9,'#f3a0a8');
+      P(6,9,SKS);
+    } else { // left
+      R(4,7,2,2,O); P(4,7,'#ffffff');
+      P(3,9,'#f3a0a8');
+      P(7,9,SKS);
+    }
   }
   // TORSO — dress shirt
   R(1,10,12,10,SH);
